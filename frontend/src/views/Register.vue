@@ -136,12 +136,12 @@
             </div>
         </div>
 
-        <!-- POW验证弹窗 -->
+        <!-- 人机验证弹窗 -->
         <div
             v-if="showModal"
             class="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 transition-opacity duration-300"
             @click="closeModal"
-            id="powModal"
+            id="verifyModal"
             style="display: none;"
         >
             <div class="modal bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md mx-4 transform transition-all duration-300 scale-100 lg:ml-[255px]" @click.stop>
@@ -158,7 +158,7 @@
                 </div>
                 <div class="pow p-6">
                     <div class="flex items-center justify-center">
-                        <div id="pow-container" class="mx-auto min-w-[320px]"></div>
+                        <div id="verify-container" class="mx-auto min-w-[260px]"></div>
                     </div>
                     <p class="pow-tip text-center text-gray-600 dark:text-gray-300 mt-4">
                         请完成人机验证以继续注册
@@ -198,8 +198,15 @@ let powCheckInterval = null;
 // 登录配置（复用登录接口的配置）
 const loginConfig = reactive({
     pow_verify: false,
+    verify_method: 'none',
+    turnstile_site_key: '',
     start_register: false
 });
+
+// 当前验证方式（兼容旧版 pow_verify；forcedVerifyMethod 用于 Turnstile 不可用时的本地回退）
+const forcedVerifyMethod = ref('');
+const verifyMethod = () => forcedVerifyMethod.value || loginConfig.verify_method || (loginConfig.pow_verify ? 'pow' : 'none');
+const needsVerification = () => verifyMethod() !== 'none';
 
 // 错误信息
 const usernameError = ref('');
@@ -313,14 +320,14 @@ const handleRegister = () => {
 
     if (!validateForm()) return;
 
-    if (loginConfig.pow_verify) {
+    if (needsVerification()) {
         setLoadingState('正在启动', '准备安全验证...', 10);
         setTimeout(() => {
             setLoadingState('加载验证', '正在加载验证界面...', 20);
             showModal.value = true;
         }, 500);
     } else {
-        putRegister("000");
+        putRegister({});
     }
 };
 
@@ -329,23 +336,36 @@ watch(showModal, (newVal) => {
     if (newVal) {
         setTimeout(() => {
             setLoadingState('加载验证', '正在初始化验证组件...', 30);
-            createPowWidget();
+            createVerificationWidget();
         }, 800);
     } else {
-        cleanupPowEvent();
+        cleanupVerificationEvent();
         isPowReady.value = false;
     }
 });
 
-// 创建POW验证组件
-const createPowWidget = () => {
-    const container = document.getElementById('pow-container');
+// 创建验证组件（按验证方式分派）
+const createVerificationWidget = () => {
+    const container = document.getElementById('verify-container');
     if (!container) {
-        setTimeout(createPowWidget, 200);
+        setTimeout(createVerificationWidget, 200);
         return;
     }
 
     container.innerHTML = '';
+
+    const method = verifyMethod();
+    if (method === 'turnstile') {
+        createTurnstileWidget(container);
+    } else if (method === 'cappow') {
+        createCappowWidget(container);
+    } else {
+        createOnlinePowWidget(container);
+    }
+};
+
+// 在线 POW（cha.eta.im）
+const createOnlinePowWidget = (container) => {
     const powWidget = document.createElement('pow-widget');
     powWidget.id = 'pow';
     powWidget.setAttribute('data-pow-api-endpoint', 'https://cha.eta.im/');
@@ -360,13 +380,121 @@ const createPowWidget = () => {
     });
 };
 
+// Cloudflare Turnstile
+const createTurnstileWidget = (container) => {
+    window.__turnstileRegisterCallback = (token) => {
+        closeModal();
+        setLoadingState('验证通过', '正在提交注册请求...', 90);
+        setTimeout(() => {
+            putRegister({ turnstileToken: token });
+        }, 500);
+    };
+
+    const sitekey = loginConfig.turnstile_site_key;
+    if (!sitekey) {
+        message.error('Turnstile 尚未配置，请联系管理员');
+        closeModal();
+        return;
+    }
+
+    const renderTurnstile = () => {
+        if (!window.turnstile) {
+            setTimeout(renderTurnstile, 200);
+            return;
+        }
+        clearInterval(powCheckInterval);
+        window.turnstile.render(container, {
+            sitekey,
+            callback: window.__turnstileRegisterCallback,
+            'expired-callback': () => message.warning('验证已过期，请重新验证'),
+            // 回退由服务端权威判定（未配置 / 服务端确认配置错误）；客户端组件报错一律不回退。
+            // 400*（公钥无效/禁用）提示检查配置；300*/600*（机器人检测）提示重试。
+            'error-callback': (code) => {
+                if (String(code || '').startsWith('400')) {
+                    message.error('Turnstile 验证不可用，请检查后台站点公钥配置');
+                } else {
+                    message.error('验证失败，请重试');
+                }
+                closeModal();
+            }
+        });
+        isPowReady.value = true;
+        clearLoadingState();
+        document.getElementById('verifyModal')?.style.removeProperty('display');
+    };
+
+    loadTurnstileScript(() => {
+        setLoadingState('加载验证', '正在加载验证组件...', 50);
+        renderTurnstile();
+    });
+};
+
+const loadTurnstileScript = (cb) => {
+    const id = 'turnstile-script';
+    if (document.getElementById(id)) {
+        cb();
+        return;
+    }
+    const script = document.createElement('script');
+    script.id = id;
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.onload = cb;
+    script.onerror = () => {
+        message.error('验证脚本加载失败，请刷新页面重试');
+        closeModal();
+    };
+    document.head.appendChild(script);
+};
+
+// cap-pow 本地（自托管 cap-widget）
+const createCappowWidget = (container) => {
+    if (!window.CAP_CUSTOM_WASM_URL) {
+        window.CAP_CUSTOM_WASM_URL = '/cap/cap_wasm_bg.wasm';
+    }
+
+    const capWidget = document.createElement('cap-widget');
+    capWidget.id = 'cap';
+    capWidget.setAttribute('data-cap-api-endpoint', '/api/verify/cappow/');
+    container.appendChild(capWidget);
+
+    capWidget.addEventListener('solve', handleCapSolve);
+    capWidget.addEventListener('error', (e) => {
+        message.error("验证失败，请重试！" + (e.detail?.message || ''));
+        closeModal();
+    });
+
+    loadCapWidgetScript(() => {
+        clearInterval(powCheckInterval);
+        isPowReady.value = true;
+        clearLoadingState();
+        document.getElementById('verifyModal')?.style.removeProperty('display');
+    });
+};
+
+const loadCapWidgetScript = (cb) => {
+    const id = 'cap-widget-script';
+    if (document.getElementById(id)) {
+        cb();
+        return;
+    }
+    const script = document.createElement('script');
+    script.id = id;
+    script.src = '/cap/cap.min.js';
+    script.onload = cb;
+    script.onerror = () => {
+        message.error('验证组件加载失败，请刷新页面重试');
+        closeModal();
+    };
+    document.head.appendChild(script);
+};
+
 // POW组件加载就绪处理
 const handlePowLoaded = () => {
     clearInterval(powCheckInterval);
     isPowReady.value = true;
     loadingProgress.value = 80;
     clearLoadingState();
-    document.getElementById('powModal')?.style.removeProperty('display');
+    document.getElementById('verifyModal')?.style.removeProperty('display');
 };
 
 // POW验证成功
@@ -376,7 +504,18 @@ const handlePowSuccess = async (e) => {
     setLoadingState('验证通过', '正在提交注册请求...', 90);
 
     setTimeout(() => {
-        putRegister(token);
+        putRegister({ powToken: token });
+    }, 500);
+};
+
+// cap-pow 验证成功
+const handleCapSolve = async (e) => {
+    closeModal();
+    const token = e.detail.token;
+    setLoadingState('验证通过', '正在提交注册请求...', 90);
+
+    setTimeout(() => {
+        putRegister({ capToken: token });
     }, 500);
 };
 
@@ -384,28 +523,33 @@ const handlePowSuccess = async (e) => {
 const closeModal = () => {
     showModal.value = false;
     clearLoadingState();
-    cleanupPowEvent();
+    forcedVerifyMethod.value = '';
+    cleanupVerificationEvent();
 };
 
-// 清理POW组件和事件
-const cleanupPowEvent = () => {
+// 清理验证组件和事件
+const cleanupVerificationEvent = () => {
     clearInterval(powCheckInterval);
-    const container = document.getElementById('pow-container');
+    const container = document.getElementById('verify-container');
     if (container) {
-        const widget = container.querySelector('#pow');
-        if (widget) {
-            widget.removeEventListener('solve', handlePowSuccess);
-            widget.removeEventListener('load', handlePowLoaded);
-            widget.removeEventListener('ready', handlePowLoaded);
-            widget.removeEventListener('error', () => {});
-            widget.remove();
-        }
+        container.innerHTML = '';
+    }
+    if (window.turnstile) {
+        try { window.turnstile.reset(); } catch (e) { /* 忽略 */ }
     }
     isPowReady.value = false;
 };
 
-// 提交注册请求
-const putRegister = async (token) => {
+// Turnstile 不可用（服务端返回 verify_fallback）→ 切换到本地 cap-pow 验证
+const fallbackToCappow = (msg) => {
+    message.warning(msg || 'Turnstile 验证不可用，已切换到本地验证');
+    showModal.value = false;
+    forcedVerifyMethod.value = 'cappow';
+    setTimeout(() => { showModal.value = true; }, 100);
+};
+
+// 提交注册请求（verify 携带各验证方式的 token）
+const putRegister = async (verify = {}) => {
     setLoadingState('注册中', '正在创建账户...', 90);
 
     try {
@@ -417,7 +561,7 @@ const putRegister = async (token) => {
             body: JSON.stringify({
                 username: username.value.trim(),
                 password: password.value,
-                powToken: token
+                ...verify
             })
         });
 
@@ -434,13 +578,18 @@ const putRegister = async (token) => {
             }, 1500);
         } else {
             clearLoadingState();
+            // Turnstile 配置不可用 → 回退到本地 cap-pow 验证
+            if (result.data?.verify_fallback === 'cappow') {
+                fallbackToCappow();
+                return;
+            }
             const errMsg = result.message || '注册失败，请稍后重试';
 
             if (errMsg.includes('用户名') || errMsg.includes('已存在')) {
                 usernameError.value = errMsg;
             } else if (errMsg.includes('密码')) {
                 passwordError.value = errMsg;
-            } else if (errMsg.includes('pow') || errMsg.includes('POW')) {
+            } else if (errMsg.includes('pow') || errMsg.includes('POW') || errMsg.includes('人机验证')) {
                 message.error(errMsg);
             } else if (errMsg.includes('未开放') || errMsg.includes('禁止')) {
                 message.error(errMsg);
@@ -470,6 +619,8 @@ const getLoginSettings = async () => {
         const result = await response.json();
         if (response.ok && result.code === 200) {
             loginConfig.pow_verify = result.data.pow_verify || false;
+            loginConfig.verify_method = result.data.verify_method || (result.data.pow_verify ? 'pow' : 'none');
+            loginConfig.turnstile_site_key = result.data.turnstile_site_key || '';
             loginConfig.start_register = result.data.start_register || false;
         }
     } catch (error) {
@@ -492,19 +643,28 @@ onMounted(async () => {
         return;
     }
 
-    // 加载POW脚本（避免重复加载）
-    if (loginConfig.pow_verify && !document.querySelector('script[src="https://cha.eta.im/static/js/pow.min.js"]')) {
-        const script = document.createElement('script');
-        script.src = 'https://cha.eta.im/static/js/pow.min.js';
-        script.onload = () => {
-            console.log('POW脚本加载完成');
-        };
-        script.onerror = () => {
-            message.error('验证脚本加载失败，请刷新页面重试');
-            clearLoadingState();
-            closeModal();
-        };
-        document.head.appendChild(script);
+    // 预加载当前验证方式所需脚本
+    const method = verifyMethod();
+    if (method === 'cappow') {
+        if (!window.CAP_CUSTOM_WASM_URL) {
+            window.CAP_CUSTOM_WASM_URL = '/cap/cap_wasm_bg.wasm';
+        }
+        loadCapWidgetScript(() => {});
+    } else if (method === 'pow') {
+        // 加载POW脚本（避免重复加载）
+        if (!document.querySelector('script[src="https://cha.eta.im/static/js/pow.min.js"]')) {
+            const script = document.createElement('script');
+            script.src = 'https://cha.eta.im/static/js/pow.min.js';
+            script.onload = () => {
+                console.log('POW脚本加载完成');
+            };
+            script.onerror = () => {
+                message.error('验证脚本加载失败，请刷新页面重试');
+                clearLoadingState();
+                closeModal();
+            };
+            document.head.appendChild(script);
+        }
     }
 
     usernameInput.value?.focus();
@@ -512,6 +672,6 @@ onMounted(async () => {
 
 // 清理资源
 onUnmounted(() => {
-    cleanupPowEvent();
+    cleanupVerificationEvent();
 });
 </script>

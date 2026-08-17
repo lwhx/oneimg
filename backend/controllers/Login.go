@@ -24,6 +24,8 @@ type LoginRequest struct {
 	Username           string         `json:"username" binding:"required"`
 	Password           string         `json:"password" binding:"required"`
 	PowToken           string         `json:"powToken"`
+	TurnstileToken     string         `json:"turnstileToken"`
+	CapToken           string         `json:"capToken"`
 	TouristFingerprint string         `json:"touristFingerprint"`
 	FusionHash         string         `json:"fusionHash"`
 	StableFeatures     map[string]any `json:"stableFeatures"`
@@ -60,15 +62,17 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	if settings.PowVerify {
-		if req.PowToken == "" {
-			c.JSON(http.StatusBadRequest, result.Error(400, "请输入pow token"))
+	if ok, errMsg, fallback := verifyHuman(c, settings, req.PowToken, req.TurnstileToken, req.CapToken); !ok {
+		if fallback != "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    400,
+				"message": errMsg,
+				"data":    gin.H{"verify_fallback": fallback},
+			})
 			return
 		}
-		if !ValidatePowToken(req.PowToken) {
-			c.JSON(http.StatusBadRequest, result.Error(400, "pow token验证失败"))
-			return
-		}
+		c.JSON(http.StatusBadRequest, result.Error(400, errMsg))
+		return
 	}
 
 	// 游客：指纹 UUID / guest_ 前缀 / 固定 guest

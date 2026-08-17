@@ -16,7 +16,7 @@ import (
 // ChangeAccountInfoRequest 修改账户信息请求体。
 type ChangeAccountInfoRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required"`
-	NewPassword     string `json:"new_password" binding:"min=6"`
+	NewPassword     string `json:"new_password"`
 	NewUsername     string `json:"new_username" binding:"max=64"`
 }
 
@@ -37,6 +37,15 @@ func ChangeAccountInfo(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, AccountResponse{
 			Code:    400,
 			Message: "请求参数错误: " + err.Error(),
+			Success: false,
+		})
+		return
+	}
+
+	if len(req.NewPassword) < 6 {
+		c.JSON(http.StatusBadRequest, AccountResponse{
+			Code:    400,
+			Message: "新密码长度不能小于6",
 			Success: false,
 		})
 		return

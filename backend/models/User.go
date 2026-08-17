@@ -14,7 +14,7 @@ type User struct {
 	Role       int        `json:"role" gorm:"default:1"`
 	Username   string     `json:"username" gorm:"unique;not null"`
 	Password   string     `json:"-" gorm:"not null"`
-	Permission Permission `json:"permission" gorm:"type:jsonb"`
+	Permission Permission `json:"permission" gorm:"type:json"`
 	CreatedAt  time.Time  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt  time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 }

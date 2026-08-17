@@ -20,10 +20,12 @@ func GetSettings() (models.Settings, error) {
 
 	if changed, migrateErr := secureconfig.TryMigrateSettingsSecrets(&settings); migrateErr == nil && changed {
 		_ = db.DB.Model(&settings).Updates(map[string]any{
-			"tg_bot_token":       settings.TGBotToken,
-			"api_token":          settings.APIToken,
-			"api_token_hash":     settings.APITokenHash,
-			"oidc_client_secret": settings.OIDCClientSecret,
+			"tg_bot_token":         settings.TGBotToken,
+			"api_token":            settings.APIToken,
+			"api_token_hash":       settings.APITokenHash,
+			"oidc_client_secret":   settings.OIDCClientSecret,
+			"turnstile_secret_key": settings.TurnstileSecret,
+			"cloudflare_api_token": settings.CloudflareAPIToken,
 		}).Error
 	}
 
@@ -41,6 +43,22 @@ func GetSettings() (models.Settings, error) {
 			return settings, decryptErr
 		}
 		settings.OIDCClientSecret = decrypted
+	}
+
+	if settings.TurnstileSecret != "" {
+		decrypted, decryptErr := secureconfig.DecryptSettingValue("turnstile_secret_key", settings.TurnstileSecret)
+		if decryptErr != nil {
+			return settings, decryptErr
+		}
+		settings.TurnstileSecret = decrypted
+	}
+
+	if settings.CloudflareAPIToken != "" {
+		decrypted, decryptErr := secureconfig.DecryptSettingValue("cloudflare_api_token", settings.CloudflareAPIToken)
+		if decryptErr != nil {
+			return settings, decryptErr
+		}
+		settings.CloudflareAPIToken = decrypted
 	}
 
 	return settings, nil

@@ -19,6 +19,15 @@ import (
 // 初始化随机数种子
 var randomGenerator = rand.New(rand.NewSource(time.Now().UnixNano()))
 
+// randomOrderExpr 返回当前数据库方言的随机排序函数。
+// SQLite / PostgreSQL 使用 RANDOM()，MySQL 使用 RAND()。
+func randomOrderExpr(db *gorm.DB) string {
+	if db.Dialector.Name() == "mysql" {
+		return "RAND()"
+	}
+	return "RANDOM()"
+}
+
 // 定义返回的图片结构体
 type RandomImageResponse struct {
 	Image string `json:"image"` // 图片文件名
@@ -92,7 +101,7 @@ func GetRandomImages(c *gin.Context) {
 	}
 
 	var images []models.Image
-	if err := query.Order("RANDOM()").Limit(limit).Find(&images).Error; err != nil {
+	if err := query.Order(randomOrderExpr(db)).Limit(limit).Find(&images).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, result.Error(500, "获取图片失败"))
 		return
 	}
