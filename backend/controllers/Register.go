@@ -26,9 +26,11 @@ func Register(c *gin.Context) {
 	}
 
 	type RegisterReq struct {
-		Username string `json:"username" binding:"required,min=3,max=50"`
-		Password string `json:"password" binding:"required,min=6,max=100"`
-		PowToken string `json:"powToken"`
+		Username       string `json:"username" binding:"required,min=3,max=50"`
+		Password       string `json:"password" binding:"required,min=6,max=100"`
+		PowToken       string `json:"powToken"`
+		TurnstileToken string `json:"turnstileToken"`
+		CapToken       string `json:"capToken"`
 	}
 	var req RegisterReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -36,15 +38,17 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	if settings.PowVerify {
-		if req.PowToken == "" {
-			c.JSON(http.StatusBadRequest, result.Error(400, "请完成人机验证"))
+	if ok, errMsg, fallback := verifyHuman(c, settings, req.PowToken, req.TurnstileToken, req.CapToken); !ok {
+		if fallback != "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    400,
+				"message": errMsg,
+				"data":    gin.H{"verify_fallback": fallback},
+			})
 			return
 		}
-		if !ValidatePowToken(req.PowToken) {
-			c.JSON(http.StatusBadRequest, result.Error(400, "人机验证失败，请重试"))
-			return
-		}
+		c.JSON(http.StatusBadRequest, result.Error(400, errMsg))
+		return
 	}
 
 	db := database.GetDB().DB

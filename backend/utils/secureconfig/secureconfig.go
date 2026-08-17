@@ -35,9 +35,11 @@ var bucketSensitiveKeys = map[string]struct{}{
 }
 
 var settingsSensitiveKeys = map[string]struct{}{
-	"api_token":          {},
-	"tg_bot_token":       {},
-	"oidc_client_secret": {},
+	"api_token":             {},
+	"tg_bot_token":          {},
+	"oidc_client_secret":    {},
+	"turnstile_secret_key":  {},
+	"cloudflare_api_token":  {},
 }
 
 func EncryptBucketConfigValues(configMap map[string]any) (map[string]any, error) {
@@ -78,6 +80,14 @@ func SanitizeSettingsForResponse(setting models.Settings) map[string]any {
 	if strings.TrimSpace(setting.OIDCClientSecret) != "" {
 		oidcClientSecretStatus = ConfiguredStatus
 	}
+	turnstileSecretStatus := ""
+	if strings.TrimSpace(setting.TurnstileSecret) != "" {
+		turnstileSecretStatus = ConfiguredStatus
+	}
+	cloudflareAPITokenStatus := ""
+	if strings.TrimSpace(setting.CloudflareAPIToken) != "" {
+		cloudflareAPITokenStatus = ConfiguredStatus
+	}
 
 	return map[string]any{
 		"id":                            setting.ID,
@@ -87,6 +97,14 @@ func SanitizeSettingsForResponse(setting models.Settings) map[string]any {
 		"tourist":                       setting.Tourist,
 		"tg_notice":                     setting.TGNotice,
 		"pow_verify":                    setting.PowVerify,
+		"verify_method":                 models.EffectiveVerifyMethod(setting),
+		"turnstile_site_key":            setting.TurnstileSiteKey,
+		"turnstile_secret_key":            turnstileSecretStatus,
+		"turnstile_secret_key_configured": strings.TrimSpace(setting.TurnstileSecret) != "",
+		"cloudflare_api_token":            cloudflareAPITokenStatus,
+		"cloudflare_api_token_configured": strings.TrimSpace(setting.CloudflareAPIToken) != "",
+		"cloudflare_account_id":           setting.CloudflareAccountID,
+		"cappow_difficulty":               setting.CappowDifficulty,
 		"tg_bot_token":                  tgBotTokenStatus,
 		"tg_bot_token_configured":       strings.TrimSpace(setting.TGBotToken) != "",
 		"tg_receivers":                  setting.TGReceivers,
@@ -186,6 +204,24 @@ func TryMigrateSettingsSecrets(setting *models.Settings) (bool, error) {
 			return false, err
 		}
 		setting.OIDCClientSecret = encrypted
+		changed = true
+	}
+
+	if strings.TrimSpace(setting.TurnstileSecret) != "" && !IsEncryptedValue(setting.TurnstileSecret) {
+		encrypted, err := encryptString(setting.TurnstileSecret)
+		if err != nil {
+			return false, err
+		}
+		setting.TurnstileSecret = encrypted
+		changed = true
+	}
+
+	if strings.TrimSpace(setting.CloudflareAPIToken) != "" && !IsEncryptedValue(setting.CloudflareAPIToken) {
+		encrypted, err := encryptString(setting.CloudflareAPIToken)
+		if err != nil {
+			return false, err
+		}
+		setting.CloudflareAPIToken = encrypted
 		changed = true
 	}
 

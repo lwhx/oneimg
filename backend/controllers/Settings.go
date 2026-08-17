@@ -117,13 +117,15 @@ func GetLoginSettings(c *gin.Context) {
 
 	c.JSON(200, result.Success("ok",
 		map[string]any{
-			"pow_verify":        settingModel.PowVerify,
-			"tourist":           settingModel.Tourist,
-			"start_register":    settingModel.StartRegister,
-			"oidc_enabled":      oidcSettingsReady(settingModel),
-			"oidc_display_name": externalLoginDisplayName(settingModel.OIDCDisplayName, "OIDC 登录"),
-			"cas_enabled":       casSettingsReady(settingModel),
-			"cas_display_name":  externalLoginDisplayName(settingModel.CASDisplayName, "CAS 登录"),
+			"verify_method":        effectiveVerifyMethodWithFallback(settingModel),
+			"pow_verify":           settingModel.PowVerify,
+			"turnstile_site_key":   settingModel.TurnstileSiteKey,
+			"tourist":              settingModel.Tourist,
+			"start_register":       settingModel.StartRegister,
+			"oidc_enabled":         oidcSettingsReady(settingModel),
+			"oidc_display_name":    externalLoginDisplayName(settingModel.OIDCDisplayName, "OIDC 登录"),
+			"cas_enabled":          casSettingsReady(settingModel),
+			"cas_display_name":     externalLoginDisplayName(settingModel.CASDisplayName, "CAS 登录"),
 		},
 	))
 }
@@ -273,6 +275,12 @@ func updateSensitiveSettingsField(settings *models.Settings, key string, value a
 	case "oidc_client_secret":
 		settings.OIDCClientSecret = stringValue
 		return nil
+	case "turnstile_secret_key":
+		settings.TurnstileSecret = stringValue
+		return nil
+	case "cloudflare_api_token":
+		settings.CloudflareAPIToken = stringValue
+		return nil
 	default:
 		return fmt.Errorf("设置项 %s 不支持敏感更新", key)
 	}
@@ -287,7 +295,7 @@ func buildSettingsUpdate(key string, value any, fieldName string, fieldType refl
 	switch key {
 	case "api_token":
 		return "api_token_hash", normalizedValue, nil
-	case "tg_bot_token", "oidc_client_secret":
+	case "tg_bot_token", "oidc_client_secret", "turnstile_secret_key", "cloudflare_api_token":
 		return key, normalizedValue, nil
 	case "public_image_domain":
 		domain, err := publicurl.NormalizeDomain(fmt.Sprintf("%v", value))
@@ -553,6 +561,45 @@ func validateSettingData(key string, value any) error {
 				return fmt.Errorf("请先完整配置 CAS Server URL 和回调地址")
 			}
 		}
+	case "verify_method":
+		method := strings.TrimSpace(fmt.Sprintf("%v", value))
+		switch method {
+		case models.VerifyMethodNone, models.VerifyMethodPOW, models.VerifyMethodTurnstile, models.VerifyMethodCappow:
+		default:
+			return fmt.Errorf("验证方式不合法，可选：无验证、在线POW、Turnstile、cap-pow")
+		}
+		// 允许先切换方式、后配置密钥：若 Turnstile 密钥未配置，登录/注册时
+		// 会提示「Turnstile 验证尚未配置」，避免配置死锁。
+	case "turnstile_site_key":
+		siteKey := strings.TrimSpace(fmt.Sprintf("%v", value))
+		if siteKey == "" {
+			return nil // 允许清空
+		}
+		// 保存前通过 Cloudflare 管理 API 校验公钥真实存在（需先配置 API Token 与账号 ID）
+		setting, err := settings.GetSettings()
+		if err != nil {
+			return fmt.Errorf("获取系统配置失败")
+		}
+		if err := validateTurnstileSiteKeyAPI(siteKey, setting.CloudflareAPIToken, setting.CloudflareAccountID); err != nil {
+			return err
+		}
+	case "turnstile_secret_key":
+		// 留空表示不修改（沿用已配置密钥），跳过校验
+		if strings.TrimSpace(fmt.Sprintf("%v", value)) == "" {
+			return nil
+		}
+		// 保存前发起模拟验证请求，确认密钥被 Cloudflare 识别
+		if err := probeTurnstileSecret(fmt.Sprintf("%v", value)); err != nil {
+			return err
+		}
+	case "cappow_difficulty":
+		diff, err := settingValueToInt(value)
+		if err != nil {
+			return fmt.Errorf("cap-pow 难度必须为整数")
+		}
+		if diff < 1 || diff > 8 {
+			return fmt.Errorf("cap-pow 难度必须在 1-8 之间")
+		}
 	case "encrypted_storage":
 		enabled, err := convertValueToTargetType(key, value, reflect.TypeOf(false))
 		if err != nil {
@@ -786,6 +833,12 @@ var SettingKeyPermissionMap = map[string]string{
 
 	// --- 安全与登录 ---
 	"pow_verify":                "setting:security",
+	"verify_method":             "setting:security",
+	"turnstile_site_key":        "setting:security",
+	"turnstile_secret_key":      "setting:security",
+	"cloudflare_api_token":      "setting:security",
+	"cloudflare_account_id":     "setting:security",
+	"cappow_difficulty":         "setting:security",
 	"tourist":                   "setting:security",
 	"start_register":            "setting:security",
 	"referer_white_enable":      "setting:security",

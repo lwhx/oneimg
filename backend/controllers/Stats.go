@@ -63,6 +63,28 @@ func scopeStatsImages(db *gorm.DB, roleID, userID int, userUUID string) *gorm.DB
 	return q.Where("user_id = ?", userID)
 }
 
+// createdAtPrefix 返回“将 created_at 按年/月截断”的数据库方言兼容表达式。
+// SQLite 用 strftime，MySQL 用 DATE_FORMAT，PostgreSQL 用 TO_CHAR。
+func createdAtPrefix(db *gorm.DB, part string) string {
+	switch db.Dialector.Name() {
+	case "mysql":
+		if part == "month" {
+			return "DATE_FORMAT(created_at, '%Y-%m')"
+		}
+		return "DATE_FORMAT(created_at, '%Y')"
+	case "postgres":
+		if part == "month" {
+			return "TO_CHAR(created_at, 'YYYY-MM')"
+		}
+		return "TO_CHAR(created_at, 'YYYY')"
+	default: // sqlite
+		if part == "month" {
+			return "strftime('%Y-%m', created_at)"
+		}
+		return "strftime('%Y', created_at)"
+	}
+}
+
 // GetDashboardStats 获取仪表板统计数据
 func GetDashboardStats(c *gin.Context) {
 	db := database.GetDB().DB
@@ -293,7 +315,7 @@ func getMonthlyStats(db *gorm.DB, roleID, userID int, userUUID string) []UploadT
 
 		var count int64
 		scopeStatsImages(db, roleID, userID, userUUID).
-			Where("strftime('%Y-%m', created_at) = ?", monthStr).
+			Where(createdAtPrefix(db, "month")+" = ?", monthStr).
 			Count(&count)
 
 		stats = append(stats, UploadTrendItem{
@@ -315,7 +337,7 @@ func getYearlyStats(db *gorm.DB, roleID, userID int, userUUID string) []UploadTr
 
 		var count int64
 		scopeStatsImages(db, roleID, userID, userUUID).
-			Where("strftime('%Y', created_at) = ?", year).
+			Where(createdAtPrefix(db, "year")+" = ?", year).
 			Count(&count)
 
 		stats = append(stats, UploadTrendItem{

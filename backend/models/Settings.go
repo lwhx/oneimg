@@ -13,7 +13,13 @@ type Settings struct {
 	Thumbnail        bool   `gorm:"column:thumbnail;default:true" json:"thumbnail"`                    // 是否生成缩略图（默认生成）
 	Tourist          bool   `gorm:"column:tourist;default:false" json:"tourist"`                       // 是否允许游客上传（默认允许）
 	TGNotice         bool   `gorm:"column:tg_notice;default:false" json:"tg_notice"`                   // 是否启用TG通知（默认关闭）
-	PowVerify        bool   `gorm:"column:pow_verify;default:false" json:"pow_verify"`                 // 是否启用POW验证（默认关闭）
+	PowVerify        bool   `gorm:"column:pow_verify;default:false" json:"pow_verify"`                 // 是否启用POW验证（默认关闭，旧版开关，兼容用）
+	VerifyMethod     string `gorm:"column:verify_method;default:''" json:"verify_method"`              // 人机验证方式：''|none|pow|turnstile|cappow（空则按 pow_verify 兼容解析）
+	TurnstileSiteKey string `gorm:"column:turnstile_site_key;default:''" json:"turnstile_site_key"`    // Cloudflare Turnstile 站点公钥
+	TurnstileSecret  string `gorm:"column:turnstile_secret_key;default:''" json:"turnstile_secret_key"` // Cloudflare Turnstile 密钥（敏感，加密存储）
+	CappowDifficulty int    `gorm:"column:cappow_difficulty;default:4" json:"cappow_difficulty"`       // cap-pow 本地难度（目标 hex 前缀长度，1-8）
+	CloudflareAPIToken string `gorm:"column:cloudflare_api_token;default:''" json:"cloudflare_api_token"`   // Cloudflare API Token（Turnstile:Read，用于校验公钥，敏感，加密存储）
+	CloudflareAccountID string `gorm:"column:cloudflare_account_id;default:''" json:"cloudflare_account_id"` // Cloudflare 账号 ID（用于校验公钥）
 	TGBotToken       string `gorm:"column:tg_bot_token;default:''" json:"tg_bot_token"`                // TG机器人Token
 	TGReceivers      string `gorm:"column:tg_receivers;default:''" json:"tg_receivers"`                // TG接收者（多个用逗号分隔）
 	TGNoticeText     string `gorm:"column:tg_notice_text;default:''" json:"tg_notice_text"`            // TG通知文本
@@ -75,6 +81,26 @@ type Settings struct {
 	SEOICP         string `gorm:"column:seo_icp;default:''" json:"seo_icp"`                                     // SEO ICP备案（默认为空）
 	PublicSecurity string `gorm:"column:public_security;default:''" json:"public_security"`                     // SEO 公安备案（默认为空）
 	SEOicon        string `gorm:"column:seo_icon;default:''" json:"seo_icon"`                                   // SEO ICON（默认为空）
+}
+
+// 人机验证方式常量。
+const (
+	VerifyMethodNone     = "none"
+	VerifyMethodPOW      = "pow"
+	VerifyMethodTurnstile = "turnstile"
+	VerifyMethodCappow   = "cappow"
+)
+
+// EffectiveVerifyMethod 返回实际生效的人机验证方式。
+// 新字段 verify_method 为空时，兼容旧版 pow_verify 开关。
+func EffectiveVerifyMethod(s Settings) string {
+	if s.VerifyMethod != "" {
+		return s.VerifyMethod
+	}
+	if s.PowVerify {
+		return VerifyMethodPOW
+	}
+	return VerifyMethodNone
 }
 
 // TableName 指定表名（避免GORM自动复数）

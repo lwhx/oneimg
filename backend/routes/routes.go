@@ -57,6 +57,10 @@ func SetupRoutes(frontendFS embed.FS) *gin.Engine {
 	r.StaticFS("/assets", http.FS(assetsFS))
 	r.StaticFile("/favicon.ico", "./frontend/dist/favicon.ico")
 
+	// cap-pow 自托管验证组件（cap-widget JS + WASM）
+	capFS, _ := fs.Sub(distFS, "cap")
+	r.StaticFS("/cap", http.FS(capFS))
+
 	api := r.Group("/api")
 	{
 		// 公开接口
@@ -66,6 +70,8 @@ func SetupRoutes(frontendFS embed.FS) *gin.Engine {
 		api.GET("/logout", controllers.Logout)
 		api.GET("/settings/login", controllers.GetLoginSettings)
 		api.GET("/settings/seo", controllers.GetSEOSettings)
+		api.POST("/verify/cappow/challenge", controllers.CapPowChallenge)
+		api.POST("/verify/cappow/redeem", controllers.CapPowRedeem)
 		api.GET("/images/random", controllers.GetRandomImages)
 		api.GET("/auth/oidc/login", controllers.StartOIDCLogin)
 		api.GET("/auth/oidc/callback", controllers.OIDCCallback)

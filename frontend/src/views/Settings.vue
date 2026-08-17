@@ -280,8 +280,42 @@
 
                             <!-- 安全与登录开关 -->
                             <div v-show="activeSettingsTab === 'security'" class="setting-row">
-                                <div><p class="setting-row-title">PoW 验证</p><p class="setting-row-hint">开启后，登录时需要完成工作量证明，有效防止暴力破解。</p></div>
-                                <label class="relative inline-flex cursor-pointer items-center self-end md:self-center"><input type="checkbox" v-model="systemSettings.pow_verify" class="sr-only peer" @change="handleSwitchChange('pow_verify', systemSettings.pow_verify)"><div class="switch-track"></div><div class="switch-thumb"></div></label>
+                                <div><p class="setting-row-title">人机验证方式</p><p class="setting-row-hint">登录/注册时要求完成的人机验证。在线POW 使用外部 cha.eta.im 服务；Turnstile 使用 Cloudflare；cap-pow 为本地自托管验证。</p></div>
+                                <select id="verify_method" v-model="systemSettings.verify_method" class="input-modern w-auto self-end md:self-center" @change="handleSelectChange('verify_method', systemSettings.verify_method)">
+                                    <option value="none">无验证</option>
+                                    <option value="pow">在线POW</option>
+                                    <option value="turnstile">Cloudflare Turnstile</option>
+                                    <option value="cappow">cap-pow 本地</option>
+                                </select>
+                            </div>
+
+                            <!-- Turnstile 配置 -->
+                            <div v-if="systemSettings.verify_method === 'turnstile'" v-show="activeSettingsTab === 'security'" class="setting-group">
+                                <label class="field-label" for="cloudflare_api_token">Cloudflare API Token（Turnstile:Read）</label>
+                                <input id="cloudflare_api_token" v-model="systemSettings.cloudflare_api_token" type="password" class="input-modern" :placeholder="systemSettings.cloudflare_api_token_configured ? '已配置，留空表示不修改' : '未配置，请输入 API Token'" autocomplete="new-password" @blur="handleFieldBlur('cloudflare_api_token', systemSettings.cloudflare_api_token)" />
+                                <div class="field-hint">{{ systemSettings.cloudflare_api_token_configured ? '已配置，留空表示不修改' : '保存公钥时校验用。需在 Cloudflare 控制台创建，权限：Account → Turnstile → Read' }}</div>
+                            </div>
+                            <div v-if="systemSettings.verify_method === 'turnstile'" v-show="activeSettingsTab === 'security'" class="setting-group">
+                                <label class="field-label" for="cloudflare_account_id">Cloudflare 账号 ID</label>
+                                <input id="cloudflare_account_id" v-model="systemSettings.cloudflare_account_id" type="text" class="input-modern" placeholder="Cloudflare 仪表盘首页右下角" @blur="handleFieldBlur('cloudflare_account_id', systemSettings.cloudflare_account_id)" />
+                                <div class="field-hint">Cloudflare 控制台首页右下角可查看账号 ID。</div>
+                            </div>
+                            <div v-if="systemSettings.verify_method === 'turnstile'" v-show="activeSettingsTab === 'security'" class="setting-group">
+                                <label class="field-label" for="turnstile_site_key">Turnstile 站点公钥 (Site Key)</label>
+                                <input id="turnstile_site_key" v-model="systemSettings.turnstile_site_key" type="text" class="input-modern" placeholder="0x..." @blur="handleFieldBlur('turnstile_site_key', systemSettings.turnstile_site_key)" />
+                                <div class="field-hint">在 Cloudflare 控制台 → Turnstile 创建站点后获取。保存时通过 Cloudflare API 校验公钥是否真实存在。</div>
+                            </div>
+                            <div v-if="systemSettings.verify_method === 'turnstile'" v-show="activeSettingsTab === 'security'" class="setting-group">
+                                <label class="field-label" for="turnstile_secret_key">Turnstile 密钥 (Secret Key)</label>
+                                <input id="turnstile_secret_key" v-model="systemSettings.turnstile_secret_key" type="password" class="input-modern" :placeholder="systemSettings.turnstile_secret_key_configured ? '已配置，留空表示不修改' : '未配置，请输入 Secret Key'" autocomplete="new-password" @blur="handleFieldBlur('turnstile_secret_key', systemSettings.turnstile_secret_key)" />
+                                <div class="field-hint">{{ systemSettings.turnstile_secret_key_configured ? '已配置，留空表示不修改' : '保存时通过 Cloudflare siteverify 校验密钥有效性' }}</div>
+                            </div>
+
+                            <!-- cap-pow 配置 -->
+                            <div v-if="systemSettings.verify_method === 'cappow'" v-show="activeSettingsTab === 'security'" class="setting-group">
+                                <label class="field-label" for="cappow_difficulty">cap-pow 难度</label>
+                                <input id="cappow_difficulty" v-model="systemSettings.cappow_difficulty" type="number" min="1" max="8" class="input-modern" placeholder="4" @blur="handleFieldBlur('cappow_difficulty', systemSettings.cappow_difficulty)" />
+                                <div class="field-hint">目标哈希前缀长度（1-8），数值越大越难。默认 4，通常 1-3 秒完成。</div>
                             </div>
 
                             <div v-show="activeSettingsTab === 'security'" class="setting-row">
