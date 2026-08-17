@@ -42,7 +42,7 @@ func ChangeAccountInfo(c *gin.Context) {
 		return
 	}
 
-	if len(req.NewPassword) < 6 {
+	if req.NewPassword != "" && len(req.NewPassword) < 6 {
 		c.JSON(http.StatusBadRequest, AccountResponse{
 			Code:    400,
 			Message: "新密码长度不能小于6",
