@@ -71,9 +71,10 @@ func DeleteImage(c *gin.Context) {
 		}
 
 		for _, storage := range storageList {
+			usageColumn := database.UsageColumn(tx)
 			err := tx.Model(&models.Buckets{}).
 				Where("id = ?", storage.BucketID).
-				UpdateColumn("usage", gorm.Expr("GREATEST(usage - ?, 0)", fileSize)).Error
+				UpdateColumn("usage", gorm.Expr("CASE WHEN "+usageColumn+" >= ? THEN "+usageColumn+" - ? ELSE 0 END", fileSize, fileSize)).Error
 			if err != nil {
 				log.Printf("Bucket %d 扣减容量失败 size=%d err=%v", storage.BucketID, fileSize, err)
 				return err

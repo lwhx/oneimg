@@ -139,9 +139,10 @@ func uploadImagesLegacy(c *gin.Context, setting models.Settings, existingTags []
 
 		if fileResult.Storage != "default" {
 			totalSize := uint64(fileResult.FileSize + fileResult.ThumbnailSize)
+			usageColumn := database.UsageColumn(db.DB)
 			update := db.DB.Model(&models.Buckets{}).
-				Where("id = ? AND (usage + ? <= capacity OR type IN ('telegram','default') OR capacity = 0)", bucketID, totalSize).
-				UpdateColumn("usage", gorm.Expr("usage + ?", totalSize))
+				Where("id = ? AND ("+usageColumn+" + ? <= capacity OR type IN ('telegram','default') OR capacity = 0)", bucketID, totalSize).
+				UpdateColumn("usage", gorm.Expr(usageColumn+" + ?", totalSize))
 			if update.Error != nil {
 				log.Printf("更新Usage失败：%v", update.Error)
 			}
@@ -328,9 +329,10 @@ func uploadImageByURLLegacy(c *gin.Context, setting models.Settings, rawURL, tag
 
 	if fileResult.Storage != "default" {
 		totalSize := uint64(fileResult.FileSize + fileResult.ThumbnailSize)
+		usageColumn := database.UsageColumn(db.DB)
 		db.DB.Model(&models.Buckets{}).
-			Where("id = ? AND (usage + ? <= capacity OR type IN ('telegram','default') OR capacity = 0)", bucketID, totalSize).
-			UpdateColumn("usage", gorm.Expr("usage + ?", totalSize))
+			Where("id = ? AND ("+usageColumn+" + ? <= capacity OR type IN ('telegram','default') OR capacity = 0)", bucketID, totalSize).
+			UpdateColumn("usage", gorm.Expr(usageColumn+" + ?", totalSize))
 	}
 
 	if setting.TGNotice {

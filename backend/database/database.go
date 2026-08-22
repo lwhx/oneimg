@@ -52,6 +52,18 @@ func NewDB(dialector gorm.Dialector) (*Database, error) {
 	return &Database{DB: gormDB}, nil
 }
 
+// UsageColumn 返回按当前方言正确引用的 usage 列名。
+// usage 在 MySQL 中是保留字（GRANT USAGE），裸写在 SQL 表达式中会触发 1064 语法错误，
+// 因此所有原生 SQL 片段都必须对 usage 做方言化引用。
+func UsageColumn(db *gorm.DB) string {
+	switch db.Dialector.Name() {
+	case "postgres":
+		return `"usage"`
+	default: // mysql、sqlite 均接受反引号
+		return "`usage`"
+	}
+}
+
 // GetDB 获取数据库实例
 func GetDB() *Database {
 	return db
