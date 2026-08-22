@@ -557,9 +557,10 @@ func completeStorageSync(replicaID int, bucket models.Buckets, artifact localSto
 
 		if bucket.Type != "default" && totalSize > 0 {
 			totalSizeUint := uint64(totalSize)
+			usageColumn := database.UsageColumn(tx)
 			usageUpdate := tx.Model(&models.Buckets{}).
-				Where("id = ? AND (capacity = 0 OR type IN ('telegram','default') OR usage + ? <= capacity)", bucket.Id, totalSizeUint).
-				UpdateColumn("usage", gorm.Expr("usage + ?", totalSizeUint))
+				Where("id = ? AND (capacity = 0 OR type IN ('telegram','default') OR "+usageColumn+" + ? <= capacity)", bucket.Id, totalSizeUint).
+				UpdateColumn("usage", gorm.Expr(usageColumn+" + ?", totalSizeUint))
 			if usageUpdate.Error != nil {
 				return usageUpdate.Error
 			}
@@ -1075,8 +1076,9 @@ func removeReplicaRecord(db *gorm.DB, bucket models.Buckets, replica models.Imag
 			totalSize := replica.FileSize + replica.ThumbnailSize
 			if totalSize > 0 {
 				totalSizeUint := uint64(totalSize)
+				usageColumn := database.UsageColumn(tx)
 				if err := tx.Model(&models.Buckets{}).Where("id = ?", bucket.Id).
-					UpdateColumn("usage", gorm.Expr("CASE WHEN usage >= ? THEN usage - ? ELSE 0 END", totalSizeUint, totalSizeUint)).Error; err != nil {
+					UpdateColumn("usage", gorm.Expr("CASE WHEN "+usageColumn+" >= ? THEN "+usageColumn+" - ? ELSE 0 END", totalSizeUint, totalSizeUint)).Error; err != nil {
 					return err
 				}
 			}
