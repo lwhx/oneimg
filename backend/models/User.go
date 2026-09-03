@@ -92,8 +92,15 @@ type Permission struct {
 }
 
 // Value 序列化为 JSON 写入数据库。
+// 返回 string 而非 []byte：pgx 会把 []byte 当 bytea 发送，PG 的 json 列会报
+// invalid input syntax for type json (SQLSTATE 22P02)；string 在 PG/MySQL/SQLite
+// 下都能正确写入 json 列。
 func (p Permission) Value() (driver.Value, error) {
-	return json.Marshal(p)
+	data, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	return string(data), nil
 }
 
 // Scan 从数据库 JSON 反序列化。

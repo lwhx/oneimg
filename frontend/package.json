@@ -26,5 +26,11 @@
     "autoprefixer": "^10.4.22",
     "remixicon": "^4.7.0",
     "sass-embedded": "^1.92.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "esbuild"
+    ]
   }
 }
