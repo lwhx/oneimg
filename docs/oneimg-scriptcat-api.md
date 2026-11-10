@@ -2,7 +2,8 @@
 
 > 项目：[`lwhx/oneimg`](https://github.com/lwhx/oneimg)（初春图床）  
 > 依据：2026-11-10 仓库 `main` 分支，审查时基线提交 `0f5a2d4ee07ba2615739ffc9974aaccddb44ee72`。文中响应示例为**结构示意**，并非真实服务器实测返回。  
-> 目的：为后续开发 **ScriptCat 图片上传脚本**提供接口契约、鉴权方法、错误处理和实现建议。\n> **版本注意：**本文件中“多 Token / 自定义权限”内容对应开发分支 `feat/multi-api-token-scopes-expiry-20261110`；未合并并部署前仍以原有单 Token 行为为准。  
+> 目的：为后续开发 **ScriptCat 图片上传脚本**提供接口契约、鉴权方法、错误处理和实现建议。  
+> **版本注意：**本文件中“多 Token / 自定义权限”内容对应开发分支 `feat/multi-api-token-scopes-expiry-20261110`；未合并并部署前仍以原有单 Token 行为为准。  
 > 另有尚未合并的上传限制调整草稿 [PR #21](https://github.com/lwhx/oneimg/pull/21)。**本文件将当前 `main` 与待合并改动分开说明，不默认 PR 已部署。**
 
 ## 1. 接口概览
