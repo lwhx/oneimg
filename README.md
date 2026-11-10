@@ -169,13 +169,14 @@ docker run -d --name oneimg \
   ghcr.io/lwhx/oneimg:latest
 ```
 
-将 `APP_URL` 改为实际域名，并保留原有 `data`、`uploads` 挂载。使用 Compose 时，将 `build: .` 改为 `image: ghcr.io/lwhx/oneimg:latest` 后运行 `docker compose pull && docker compose up -d`。首次推送的 GHCR 包如默认不可公开拉取，需要在 GitHub Packages 中调整包的可见性。实际镜像大小以 GHCR 发布结果 / `docker image inspect` 为准。
+将 `APP_URL` 改为实际域名，并保留原有 `data`、`uploads` 挂载。仓库的 `docker-compose.yml` 现已默认使用 `image: ghcr.io/lwhx/oneimg:latest`，**无需本地构建**；更新时运行 `docker compose pull && docker compose up -d`。首次推送的 GHCR 包如默认不可公开拉取，需要在 GitHub Packages 中调整包的可见性。实际镜像大小以 GHCR 发布结果 / `docker image inspect` 为准。
 
 ### Docker Compose
 
 ```bash
-git clone https://github.com/onexru/oneimg.git
+git clone https://github.com/lwhx/oneimg.git
 cd oneimg
+docker compose pull
 docker compose up -d
 docker compose exec oneimg cat /app/data/.initial_admin_password
 ```
@@ -192,7 +193,7 @@ docker run -d \
   -v /data/oneimg:/app/data \
   -v /data/oneimg-uploads:/app/uploads \
   --restart unless-stopped \
-  onexru/oneimg-oneimg
+  ghcr.io/lwhx/oneimg:latest
 
 # 查看首次启动生成的随机管理员密码
 docker exec oneimg cat /app/data/.initial_admin_password
@@ -331,7 +332,7 @@ docker run -d --name oneimg -p 8080:8080 \
   -e TRUSTED_PROXIES=172.17.0.0/16 \
   -v /data/oneimg:/app/data \
   -v /data/oneimg-uploads:/app/uploads \
-  onexru/oneimg-oneimg
+  ghcr.io/lwhx/oneimg:latest
 ```
 
 **优先级**：编排注入的环境变量 > 容器内自动生成的 `/app/.env`。
