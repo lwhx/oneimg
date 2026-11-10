@@ -83,6 +83,13 @@ func tokenFailure(c *gin.Context, err error) {
 }
 
 func validateTokenInput(c *gin.Context, req tokenWriteRequest) bool {
+    // A sentinel is only allowed when the caller explicitly selects
+    // never_expires. Finite requests must not silently become permanent.
+    if (!req.NeverExpires && req.ExpiresAt.Equal(authsecurity.PermanentTokenExpiry)) ||
+        (req.NeverExpires && !req.ExpiresAt.IsZero()) {
+        c.JSON(400, result.Error(400, "长期有效期请使用 never_expires=true 且不提交 expires_at"))
+        return false
+    }
     expiry := req.ExpiresAt
     if req.NeverExpires { expiry = authsecurity.PermanentTokenExpiry }
     if _, _, _, err := authsecurity.ValidateTokenSpec(req.Name, req.Description, req.Scopes, expiry); err != nil {
