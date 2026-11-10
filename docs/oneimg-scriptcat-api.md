@@ -38,7 +38,7 @@
 1. 登录 OneImg 后台，确保当前账号拥有 `setting:api` 权限，并启用 API（`start_api`）。
 2. 进入“系统设置 → API → API Token 管理”，填写名称（例如 `ScriptCat 图片上传`）、备注和到期时间。
 3. 权限推荐勾选 `image:read` + `upload:write`，**不要为了方便给脚本开放删除或文件夹管理权限**。
-4. 点击“创建 Token”，**点击“复制 Token”按钮**将完整密钥复制到剪贴板；在当前页面的列表中也可复制。刷新后系统只存不可逆摘要，无法恢复原密钥；如果丢失，可对目标 Token 使用“重置并复制”，但旧 Token 会立即失效，脚本需要更新配置。
+4. 点击“创建 Token”，再点击“复制 Token”获取完整密钥。以后再次登录后台时，点击列表中的“复制 Token”仍会复制**相同密钥**，不会轮换或导致脚本失效。新 Token 使用 `CONFIG_SECRET` 加密保存可恢复副本；升级前创建的旧 Token 若只存摘要，需主动轮换一次才能启用重复复制。
 5. 将 Token 保存到 ScriptCat 的私有脚本设置（例如 `GM_setValue`），不要硬编码在公开脚本中或写入页面日志。
 
 也可以使用具备后台登录 Cookie 与 `setting:api` 权限的会话发出：
@@ -51,9 +51,9 @@ Cookie: <已登录且有权限的 OneImg 浏览器会话 Cookie>
 {"name":"ScriptCat","description":"图片上传","scopes":["image:read","upload:write"],"expires_at":"<RFC3339 到期时间>"}
 ```
 
-成功时 HTTP 201、JSON `code:200`，`data.token`（兼容别名 `data.api_token`）只返回一次。**有效期可选 5 分钟至 365 天；同账户可同时保留最多 30 个未过期未撤销 Token。**旧接口 `POST /api/settings/regenerate` 仍可用于创建默认 30 天的 Token，更新后不再撤销其他 Token。
+成功时 HTTP 201、JSON `code:200`，`data.token`（兼容别名 `data.api_token`）返回新密钥，日后可由已登录的后台通过 `POST /api/tokens/:id/reveal` 重新复制**同一枚**密钥。有效期可设置 5 分钟至 365 天，也支持显式选中“长期（不过期）”；同账户最多同时保留 30 个未过期未撤销 Token。旧接口 `POST /api/settings/regenerate` 继续新增默认 30 天 Token，不撤销其他 Token。
 
-管理 Token 的列表、编辑权限/到期时间、暂停/恢复、重置并复制（`POST /api/tokens/:id/rotate`）及撤销，详见 [多 Token 管理接口文档](api-token-management.md)。Token 无法通过 Bearer 自行调用这些管理接口。
+管理 Token 的列表、编辑权限/到期时间、暂停/恢复、**重复复制原密钥**（`POST /api/tokens/:id/reveal`）、**主动重置**（`POST /api/tokens/:id/rotate`）及撤销，详见 [多 Token 管理接口文档](api-token-management.md)。Token 无法通过 Bearer 自行调用这些管理接口。
 
 ### 2.2 所有 Token 请求的请求头
 
@@ -318,7 +318,7 @@ Authorization: Bearer <TOKEN>
 | Telegram 存储驱动 | 每个最终写入的存储对象最大 20 MiB（独立限制） |
 | 账户额度 | 默认 10 GiB，可由后台设置或个人额度覆盖 |
 
-上传限制调整草稿 [PR #21](https://github.com/lwhx/oneimg/pull/21) 将**计划**提高为：新部署默认每张 20 MiB / 每批 20 张；普通存储硬上限每张 64 MiB / 每批 100 张；单次 multipart 最多 256 MiB 文件预算；图片长边 16000 px、总像素 2400 万。**在该 PR 合并且重新部署前，不应视为已生效。**原有数据库设置也不会因为升级就强行重置。
+已合并 [PR #21](https://github.com/lwhx/oneimg/pull/21)：新安装默认每张 20 MiB / 每批 20 张；普通存储硬上限每张 64 MiB / 每批 100 张；单次 multipart 最多 256 MiB 文件预算；图片长边 16000 px、总像素 2400 万。**部署新镜像后**方可使用新上限；原有数据库设置不会因为升级自动重置。
 
 ### 5.2 图片保真相关注意事项
 

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -475,3 +476,59 @@ func ConstantTimeEqual(a, b string) bool {
 	macB.Write([]byte(b))
 	return subtle.ConstantTimeCompare(macA.Sum(nil), macB.Sum(nil)) == 1
 }
+
+
+// EncryptAPIToken encrypts the retrievable copy of a bearer secret under the
+// persistent CONFIG_SECRET. The token digest is still the only authentication
+// lookup key. GCM binds the ciphertext to that digest to prevent row swapping.
+const apiTokenCipherPrefix = "token:v1:"
+
+func apiTokenCipherKey() ([]byte, error) {
+    if config.App == nil || len(strings.TrimSpace(config.App.ConfigSecret)) < 32 {
+        return nil, errors.New("CONFIG_SECRET 未配置，拒绝保存可恢复的 API Token")
+    }
+    sum := sha256.Sum256([]byte("oneimg:api-token:aes-gcm:v1:" + config.App.ConfigSecret))
+    return sum[:], nil
+}
+
+func EncryptAPIToken(id, token string) (string, error) {
+    sum := sha256.Sum256([]byte(token))
+    if token == "" || hex.EncodeToString(sum[:]) != id {
+        return "", errors.New("API Token 摘要与密钥不一致")
+    }
+    key, err := apiTokenCipherKey()
+    if err != nil { return "", err }
+    cipherBlock, err := aes.NewCipher(key)
+    if err != nil { return "", err }
+    gcm, err := cipher.NewGCM(cipherBlock)
+    if err != nil { return "", err }
+    nonce := make([]byte, gcm.NonceSize())
+    if _, err := io.ReadFull(rand.Reader, nonce); err != nil { return "", err }
+    sealed := gcm.Seal(nonce, nonce, []byte(token), []byte("oneimg:api-token:"+id))
+    return apiTokenCipherPrefix + base64.RawStdEncoding.EncodeToString(sealed), nil
+}
+
+func DecryptAPIToken(id, ciphertext string) (string, error) {
+    if !strings.HasPrefix(ciphertext, apiTokenCipherPrefix) || len(ciphertext) > 2048 {
+        return "", errors.New("API Token 密文不存在或格式错误")
+    }
+    key, err := apiTokenCipherKey()
+    if err != nil { return "", err }
+    raw, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(ciphertext, apiTokenCipherPrefix))
+    if err != nil { return "", err }
+    cipherBlock, err := aes.NewCipher(key)
+    if err != nil { return "", err }
+    gcm, err := cipher.NewGCM(cipherBlock)
+    if err != nil { return "", err }
+    if len(raw) < gcm.NonceSize()+gcm.Overhead() {
+        return "", errors.New("API Token 密文长度无效")
+    }
+    plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], []byte("oneimg:api-token:"+id))
+    if err != nil { return "", errors.New("API Token 密文认证失败") }
+    sum := sha256.Sum256(plain)
+    if hex.EncodeToString(sum[:]) != id {
+        return "", errors.New("解密后的 API Token 摘要校验失败")
+    }
+    return string(plain), nil
+}
+

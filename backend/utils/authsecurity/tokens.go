@@ -20,6 +20,7 @@ var (
     ErrTokenLimit     = errors.New("API Token 数量已达到上限，请先撤销不再使用的 Token")
     ErrTokenNotFound  = errors.New("API Token 不存在或不可修改")
     ErrTokenImmutable = errors.New("旧版凭据不可修改，请创建新 Token 后撤销旧凭据")
+    ErrTokenUnrecoverable = errors.New("该 Token 生成于加密存储启用前，原密钥无法找回；请单独重置一次后即可重复复制")
 )
 
 const (
@@ -27,6 +28,10 @@ const (
     MaxTokenLifetime   = 365 * 24 * time.Hour
     MinTokenLifetime   = 5 * time.Minute
 )
+
+// Long-term tokens have an explicit never_expires flag and a distant
+// expiration sentinel so existing SQL queries continue to work on upgrades.
+var PermanentTokenExpiry = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 
 type TokenScope struct {
     Code        string `json:"code"`
@@ -110,8 +115,8 @@ func ValidateTokenSpec(name, description string, scopes []string, expiry time.Ti
     now := time.Now()
     // A tiny clock skew allowance is reserved at the upper boundary for a
     // date selected in a different browser timezone.
-    if expiry.IsZero() || expiry.Before(now.Add(MinTokenLifetime)) || expiry.After(now.Add(MaxTokenLifetime+time.Minute)) {
-        return "", "", "", errors.New("到期时间必须在 5 分钟至 365 天之间")
+    if !expiry.Equal(PermanentTokenExpiry) && (expiry.IsZero() || expiry.Before(now.Add(MinTokenLifetime)) || expiry.After(now.Add(MaxTokenLifetime+time.Minute))) {
+        return "", "", "", errors.New("到期时间必须在 5 分钟至 365 天之间；长期凭据需要显式选择")
     }
     return name, description, codes, nil
 }
@@ -182,7 +187,17 @@ func NewAPICredential(db *gorm.DB, owner int) (string, models.APICredential, err
 }
 
 func CreateNamedAPICredential(db *gorm.DB, owner int, name, description string, scopes []string, expiry time.Time) (string, models.APICredential, error) {
+    return CreateManagedAPICredential(db, owner, name, description, scopes, expiry, false)
+}
+
+// CreateManagedAPICredential uses permanent validity only on explicit opt-in.
+func CreateManagedAPICredential(db *gorm.DB, owner int, name, description string, scopes []string, expiry time.Time, neverExpires bool) (string, models.APICredential, error) {
     var empty models.APICredential
+    if neverExpires {
+        expiry = PermanentTokenExpiry
+    } else if expiry.Equal(PermanentTokenExpiry) {
+        return "", empty, errors.New("长期有效期必须显式指定 never_expires")
+    }
     if owner <= 0 {
         return "", empty, ErrToken
     }
@@ -195,9 +210,13 @@ func CreateNamedAPICredential(db *gorm.DB, owner int, name, description string, 
         return "", empty, err
     }
     raw := "oi_" + secret
+    id := Digest(raw)
+    encrypted, err := secureconfig.EncryptAPIToken(id, raw)
+    if err != nil { return "", empty, err }
     token := models.APICredential{
-        ID: Digest(raw), OwnerID: owner, Name: name, Description: description,
-        TokenHint: "oi_…" + raw[len(raw)-6:], Scopes: codes, ExpiresAt: expiry.UTC(),
+        ID: id, OwnerID: owner, Name: name, Description: description,
+        TokenHint: "oi_…" + raw[len(raw)-6:], EncryptedToken: encrypted,
+        Scopes: codes, ExpiresAt: expiry.UTC(), NeverExpires: neverExpires,
     }
     err = db.Transaction(func(tx *gorm.DB) error {
         var state models.AuthState
@@ -222,6 +241,15 @@ func CreateNamedAPICredential(db *gorm.DB, owner int, name, description string, 
 }
 
 func UpdateNamedAPICredential(db *gorm.DB, owner int, id, name, description string, scopes []string, expiry time.Time) error {
+    return UpdateManagedAPICredential(db, owner, id, name, description, scopes, expiry, false)
+}
+
+func UpdateManagedAPICredential(db *gorm.DB, owner int, id, name, description string, scopes []string, expiry time.Time, neverExpires bool) error {
+    if neverExpires {
+        expiry = PermanentTokenExpiry
+    } else if expiry.Equal(PermanentTokenExpiry) {
+        return errors.New("长期有效期必须显式指定 never_expires")
+    }
     name, description, codes, err := ValidateTokenSpec(name, description, scopes, expiry)
     if err != nil {
         return err
@@ -236,7 +264,7 @@ func UpdateNamedAPICredential(db *gorm.DB, owner int, id, name, description stri
         if token.Revoked || !time.Now().Before(token.ExpiresAt) { return ErrTokenNotFound }
         res := tx.Model(&models.APICredential{}).
             Where("id = ? AND owner_id = ? AND revoked = ? AND expires_at > ?", id, owner, false, time.Now()).
-            Updates(map[string]any{"name": name, "description": description, "scopes": codes, "expires_at": expiry.UTC(), "updated_at": time.Now()})
+            Updates(map[string]any{"name": name, "description": description, "scopes": codes, "expires_at": expiry.UTC(), "never_expires": neverExpires, "updated_at": time.Now()})
         if res.Error != nil { return res.Error }
         if res.RowsAffected != 1 { return ErrTokenNotFound }
         return nil
@@ -270,6 +298,8 @@ func RotateAPICredential(db *gorm.DB, owner int, id string) (string, models.APIC
     }
     raw := "oi_" + secret
     newID := Digest(raw)
+    encrypted, err := secureconfig.EncryptAPIToken(newID, raw)
+    if err != nil { return "", empty, err }
     hint := "oi_…" + raw[len(raw)-6:]
     var rotated models.APICredential
     err = db.Transaction(func(tx *gorm.DB) error {
@@ -291,7 +321,7 @@ func RotateAPICredential(db *gorm.DB, owner int, id string) (string, models.APIC
         res := tx.Model(&models.APICredential{}).
             Where("id = ? AND owner_id = ? AND revoked = ? AND expires_at > ?", id, owner, false, now).
             Updates(map[string]any{
-                "id": newID, "token_hint": hint, "last_used_at": nil, "updated_at": now,
+                "id": newID, "token_hint": hint, "encrypted_token": encrypted, "last_used_at": nil, "updated_at": now,
             })
         if res.Error != nil {
             return res.Error
@@ -301,6 +331,7 @@ func RotateAPICredential(db *gorm.DB, owner int, id string) (string, models.APIC
         }
         current.ID = newID
         current.TokenHint = hint
+        current.EncryptedToken = encrypted
         current.LastUsedAt = nil
         current.UpdatedAt = now
         rotated = current
@@ -317,8 +348,25 @@ func RevokeAPICredential(db *gorm.DB, owner int, id string) error {
     now := time.Now()
     res := db.Model(&models.APICredential{}).
         Where("id = ? AND owner_id = ? AND revoked = ?", id, owner, false).
-        Updates(map[string]any{"revoked": true, "revoked_at": now, "updated_at": now})
+        Updates(map[string]any{"revoked": true, "revoked_at": now, "encrypted_token": "", "updated_at": now})
     if res.Error != nil { return res.Error }
     if res.RowsAffected == 0 { return ErrTokenNotFound }
     return nil
+}
+
+
+// RevealAPICredential returns exactly the existing secret; it MUST NOT rotate,
+// refresh the expiry, alter scopes, or change the management ID.
+// This service is called only by session-authorized management endpoints.
+func RevealAPICredential(db *gorm.DB, owner int, id string) (string, error) {
+    if owner <= 0 || id == "" { return "", ErrTokenNotFound }
+    var token models.APICredential
+    if err := db.Where("id = ? AND owner_id = ?", id, owner).First(&token).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) { return "", ErrTokenNotFound }
+        return "", err
+    }
+    if token.Legacy { return "", ErrTokenImmutable }
+    if token.Revoked || !time.Now().Before(token.ExpiresAt) { return "", ErrTokenNotFound }
+    if token.EncryptedToken == "" { return "", ErrTokenUnrecoverable }
+    return secureconfig.DecryptAPIToken(token.ID, token.EncryptedToken)
 }

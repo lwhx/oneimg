@@ -11,8 +11,10 @@ type APICredential struct {
     Name        string     `gorm:"size:96;not null;default:''" json:"name"`
     Description string     `gorm:"size:500;not null;default:''" json:"description"`
     TokenHint   string     `gorm:"size:20;not null;default:''" json:"token_hint"`
+    EncryptedToken string `gorm:"type:text" json:"-"` // AES-GCM under CONFIG_SECRET; never returned by list APIs
     Scopes      string     `gorm:"not null" json:"scopes"`
     ExpiresAt   time.Time  `gorm:"index;not null" json:"expires_at"`
+    NeverExpires bool      `gorm:"not null;default:false" json:"never_expires"` // requires explicit selection
     LastUsedAt  *time.Time `json:"last_used_at"`
     Disabled    bool       `gorm:"not null;default:false" json:"disabled"`
     Revoked     bool       `gorm:"not null;default:false" json:"revoked"`

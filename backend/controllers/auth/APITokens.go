@@ -41,6 +41,7 @@ type tokenWriteRequest struct {
     Description string    `json:"description"`
     Scopes      []string  `json:"scopes"`
     ExpiresAt   time.Time `json:"expires_at"`
+    NeverExpires bool    `json:"never_expires"`
 }
 
 func tokenPublicView(row models.APICredential) gin.H {
@@ -56,10 +57,14 @@ func tokenPublicView(row models.APICredential) gin.H {
     if name == "" {
         name = "历史 API Token"
     }
+    var expiry any = row.ExpiresAt
+    if row.NeverExpires { expiry = nil }
     return gin.H{
         "id": row.ID, "name": name, "description": row.Description,
         "token_hint": row.TokenHint, "scopes": authsecurity.ParseTokenScopes(row.Scopes),
-        "expires_at": row.ExpiresAt, "last_used_at": row.LastUsedAt,
+        "expires_at": expiry, "never_expires": row.NeverExpires,
+        "can_reveal": !row.Legacy && !row.Revoked && time.Now().Before(row.ExpiresAt) && row.EncryptedToken != "",
+        "last_used_at": row.LastUsedAt,
         "created_at": row.CreatedAt, "updated_at": row.UpdatedAt,
         "revoked_at": row.RevokedAt, "disabled": row.Disabled,
         "revoked": row.Revoked, "legacy": row.Legacy, "status": state,
@@ -69,7 +74,7 @@ func tokenPublicView(row models.APICredential) gin.H {
 func tokenFailure(c *gin.Context, err error) {
     status, message := http.StatusInternalServerError, "Token 管理失败，请稍后重试"
     switch {
-    case errors.Is(err, authsecurity.ErrTokenLimit), errors.Is(err, authsecurity.ErrTokenImmutable):
+    case errors.Is(err, authsecurity.ErrTokenLimit), errors.Is(err, authsecurity.ErrTokenImmutable), errors.Is(err, authsecurity.ErrTokenUnrecoverable):
         status, message = http.StatusConflict, err.Error()
     case errors.Is(err, authsecurity.ErrTokenNotFound):
         status, message = http.StatusNotFound, err.Error()
@@ -78,7 +83,16 @@ func tokenFailure(c *gin.Context, err error) {
 }
 
 func validateTokenInput(c *gin.Context, req tokenWriteRequest) bool {
-    if _, _, _, err := authsecurity.ValidateTokenSpec(req.Name, req.Description, req.Scopes, req.ExpiresAt); err != nil {
+    // A sentinel is only allowed when the caller explicitly selects
+    // never_expires. Finite requests must not silently become permanent.
+    if (!req.NeverExpires && req.ExpiresAt.Equal(authsecurity.PermanentTokenExpiry)) ||
+        (req.NeverExpires && !req.ExpiresAt.IsZero()) {
+        c.JSON(400, result.Error(400, "长期有效期请使用 never_expires=true 且不提交 expires_at"))
+        return false
+    }
+    expiry := req.ExpiresAt
+    if req.NeverExpires { expiry = authsecurity.PermanentTokenExpiry }
+    if _, _, _, err := authsecurity.ValidateTokenSpec(req.Name, req.Description, req.Scopes, expiry); err != nil {
         c.JSON(400, result.Error(400, err.Error()))
         return false
     }
@@ -130,12 +144,12 @@ func CreateAPIToken(c *gin.Context) {
         c.JSON(400, result.Error(400, "Token 参数格式无效")); return
     }
     if !validateTokenInput(c, req) { return }
-    raw, token, err := authsecurity.CreateNamedAPICredential(database.GetDB().DB, c.GetInt("user_id"), req.Name, req.Description, req.Scopes, req.ExpiresAt)
+    raw, token, err := authsecurity.CreateManagedAPICredential(database.GetDB().DB, c.GetInt("user_id"), req.Name, req.Description, req.Scopes, req.ExpiresAt, req.NeverExpires)
     if err != nil {
         tokenFailure(c, err)
         return
     }
-    c.JSON(http.StatusCreated, result.Success("Token 已创建，明文仅显示本次", gin.H{
+    c.JSON(http.StatusCreated, result.Success("Token 已创建，可随时在后台重新复制", gin.H{
         "token": raw, "api_token": raw, "credential": tokenPublicView(token),
     }))
 }
@@ -158,7 +172,7 @@ func UpdateAPIToken(c *gin.Context) {
         c.JSON(400, result.Error(400, "Token 参数格式无效")); return
     }
     if !validateTokenInput(c, req) { return }
-    if err := authsecurity.UpdateNamedAPICredential(database.GetDB().DB, c.GetInt("user_id"), id, req.Name, req.Description, req.Scopes, req.ExpiresAt); err != nil {
+    if err := authsecurity.UpdateManagedAPICredential(database.GetDB().DB, c.GetInt("user_id"), id, req.Name, req.Description, req.Scopes, req.ExpiresAt, req.NeverExpires); err != nil {
         tokenFailure(c, err); return
     }
     c.JSON(200, result.Success("Token 设置已更新", nil))
@@ -202,6 +216,28 @@ func RotateAPIToken(c *gin.Context) {
     }))
 }
 
+
+
+// RevealAPIToken returns the SAME bearer secret, not a replacement.
+// Only an authorized browser session belonging to the owner may invoke it.
+func RevealAPIToken(c *gin.Context) {
+    if !requireTokenManager(c) { return }
+    c.Header("Cache-Control", "no-store")
+    c.Header("Pragma", "no-cache")
+    id := c.Param("id")
+    if !validManagedTokenID(id) {
+        c.JSON(400, result.Error(400, "Token ID 无效"))
+        return
+    }
+    raw, err := authsecurity.RevealAPICredential(database.GetDB().DB, c.GetInt("user_id"), id)
+    if err != nil {
+        tokenFailure(c, err)
+        return
+    }
+    c.JSON(http.StatusOK, result.Success("已读取原 API Token，密钥保持不变", gin.H{
+        "token": raw, "api_token": raw,
+    }))
+}
 
 func RevokeAPIToken(c *gin.Context) {
     if !requireTokenManager(c) { return }
