@@ -14,7 +14,6 @@ import (
     "oneimg/backend/utils/result"
 
     "github.com/gin-gonic/gin"
-    "gorm.io/gorm"
 )
 
 // API Token management is restricted to authenticated browser sessions with
@@ -67,14 +66,23 @@ func tokenPublicView(row models.APICredential) gin.H {
     }
 }
 
-func tokenBadRequest(c *gin.Context, err error) {
-    status := http.StatusBadRequest
-    if errors.Is(err, authsecurity.ErrTokenLimit) || errors.Is(err, authsecurity.ErrTokenImmutable) {
-        status = http.StatusConflict
-    } else if errors.Is(err, authsecurity.ErrTokenNotFound) {
-        status = http.StatusNotFound
+func tokenFailure(c *gin.Context, err error) {
+    status, message := http.StatusInternalServerError, "Token 管理失败，请稍后重试"
+    switch {
+    case errors.Is(err, authsecurity.ErrTokenLimit), errors.Is(err, authsecurity.ErrTokenImmutable):
+        status, message = http.StatusConflict, err.Error()
+    case errors.Is(err, authsecurity.ErrTokenNotFound):
+        status, message = http.StatusNotFound, err.Error()
     }
-    c.JSON(status, result.Error(status, err.Error()))
+    c.JSON(status, result.Error(status, message))
+}
+
+func validateTokenInput(c *gin.Context, req tokenWriteRequest) bool {
+    if _, _, _, err := authsecurity.ValidateTokenSpec(req.Name, req.Description, req.Scopes, req.ExpiresAt); err != nil {
+        c.JSON(400, result.Error(400, err.Error()))
+        return false
+    }
+    return true
 }
 
 func ListAPITokens(c *gin.Context) {
@@ -121,13 +129,10 @@ func CreateAPIToken(c *gin.Context) {
     if err := c.ShouldBindJSON(&req); err != nil {
         c.JSON(400, result.Error(400, "Token 参数格式无效")); return
     }
+    if !validateTokenInput(c, req) { return }
     raw, token, err := authsecurity.CreateNamedAPICredential(database.GetDB().DB, c.GetInt("user_id"), req.Name, req.Description, req.Scopes, req.ExpiresAt)
     if err != nil {
-        if errors.Is(err, authsecurity.ErrTokenLimit) { tokenBadRequest(c, err); return }
-        if strings.Contains(err.Error(), "database") || errors.Is(err, gorm.ErrInvalidDB) {
-            c.JSON(500, result.Error(500, "保存 API Token 失败")); return
-        }
-        tokenBadRequest(c, err)
+        tokenFailure(c, err)
         return
     }
     c.JSON(http.StatusCreated, result.Success("Token 已创建，明文仅显示本次", gin.H{
@@ -152,8 +157,9 @@ func UpdateAPIToken(c *gin.Context) {
     if err := c.ShouldBindJSON(&req); err != nil {
         c.JSON(400, result.Error(400, "Token 参数格式无效")); return
     }
+    if !validateTokenInput(c, req) { return }
     if err := authsecurity.UpdateNamedAPICredential(database.GetDB().DB, c.GetInt("user_id"), id, req.Name, req.Description, req.Scopes, req.ExpiresAt); err != nil {
-        tokenBadRequest(c, err); return
+        tokenFailure(c, err); return
     }
     c.JSON(200, result.Success("Token 设置已更新", nil))
 }
@@ -168,7 +174,7 @@ func SetAPITokenStatus(c *gin.Context) {
         c.JSON(400, result.Error(400, "必须指定 disabled 布尔值")); return
     }
     if err := authsecurity.SetAPICredentialDisabled(database.GetDB().DB, c.GetInt("user_id"), id, *req.Disabled); err != nil {
-        tokenBadRequest(c, err); return
+        tokenFailure(c, err); return
     }
     c.JSON(200, result.Success("Token 状态已更新", nil))
 }
@@ -178,7 +184,7 @@ func RevokeAPIToken(c *gin.Context) {
     id := c.Param("id")
     if !validManagedTokenID(id) { c.JSON(400, result.Error(400, "Token ID 无效")); return }
     if err := authsecurity.RevokeAPICredential(database.GetDB().DB, c.GetInt("user_id"), id); err != nil {
-        tokenBadRequest(c, err); return
+        tokenFailure(c, err); return
     }
     c.JSON(200, result.Success("Token 已永久撤销", nil))
 }
