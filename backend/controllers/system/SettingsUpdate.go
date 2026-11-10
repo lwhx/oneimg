@@ -121,7 +121,9 @@ func UpdateSettings(c *gin.Context) {
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&state, 1).Error; err != nil {
 				return err
 			}
-			if err := tx.Model(&models.APICredential{}).Where("revoked = ?", false).Update("revoked", true).Error; err != nil {
+			// Rotating a legacy settings credential must not revoke independently
+			// managed tokens belonging to ScriptCat or other integrations.
+			if err := tx.Model(&models.APICredential{}).Where("legacy = ? AND revoked = ?", true, false).Update("revoked", true).Error; err != nil {
 				return err
 			}
 			if err := tx.Model(&settingModel).Updates(map[string]any{"api_token": "", "api_token_hash": updateValue}).Error; err != nil {

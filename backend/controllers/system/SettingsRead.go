@@ -53,14 +53,12 @@ func GetSettings(c *gin.Context) {
 	}
 	var tokens []models.APICredential
 	if isAdmin || user.Permission.HasPermission("setting:api") {
-		query := database.GetDB().DB.Where("revoked = ?", false)
-		if !isAdmin {
-			query = query.Where("owner_id = ?", user.ID)
-		}
+		// Token metadata is always private to its owner, including for administrators.
+		query := database.GetDB().DB.Where("revoked = ? AND owner_id = ?", false, user.ID)
 		if query.Order("created_at desc").Limit(10).Find(&tokens).Error == nil {
 			response["api_credentials"] = tokens
 			for _, token := range tokens {
-				if time.Now().Before(token.ExpiresAt) {
+				if !token.Disabled && time.Now().Before(token.ExpiresAt) {
 					response["api_token_configured"] = true
 				}
 			}

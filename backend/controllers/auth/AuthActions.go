@@ -12,8 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegenerateAPIToken returns the generated secret exactly once. GET never calls
-// this handler; token material cannot be recovered from settings or its digest.
+// RegenerateAPIToken is the legacy creation endpoint. It now adds a default
+// credential without revoking other tokens; the secret is visible only once.
 func RegenerateAPIToken(c *gin.Context) {
 	user, ok := middlewares.GetCurrentUser(c)
 	if !ok {
@@ -31,7 +31,7 @@ func RegenerateAPIToken(c *gin.Context) {
 	}
 	settings.Invalidate()
 	c.Header("Cache-Control", "private, no-store")
-	c.JSON(http.StatusOK, result.Success("API 凭据仅显示一次，请妥善保存", gin.H{"api_token": raw, "expires_at": row.ExpiresAt, "scopes": row.Scopes}))
+	c.JSON(http.StatusOK, result.Success("API 凭据创建成功，不会撤销其他 Token；明文仅显示一次", gin.H{"api_token": raw, "expires_at": row.ExpiresAt, "scopes": row.Scopes}))
 }
 
 func RenewSession(c *gin.Context) {

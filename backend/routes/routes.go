@@ -254,6 +254,12 @@ func SetupRoutes(frontendFS fs.FS) *gin.Engine {
 			auth.GET("/settings/get", middlewares.RequirePermission("setting:list"), systemctrl.GetSettings)
 			auth.POST("/settings/get", middlewares.RequirePermission("setting:list"), systemctrl.GetSettings)
 			auth.POST("/settings/regenerate", middlewares.RequirePermission("setting:api"), authctrl.RegenerateAPIToken)
+			// Session-only, owner-scoped API Token management; bearer tokens cannot access these routes.
+			auth.GET("/tokens", middlewares.RequirePermission("setting:api"), authctrl.ListAPITokens)
+			auth.POST("/tokens", middlewares.RequirePermission("setting:api"), authctrl.CreateAPIToken)
+			auth.PUT("/tokens/:id", middlewares.RequirePermission("setting:api"), authctrl.UpdateAPIToken)
+			auth.PUT("/tokens/:id/status", middlewares.RequirePermission("setting:api"), authctrl.SetAPITokenStatus)
+			auth.DELETE("/tokens/:id", middlewares.RequirePermission("setting:api"), authctrl.RevokeAPIToken)
 			auth.POST("/settings/renew_session", authctrl.RenewSession)
 			auth.POST("/settings/update", systemctrl.UpdateSettings)
 			auth.GET("/settings/randomGraph", middlewares.RequirePermission("setting:api"), imagesctrl.GetRandomGraph)

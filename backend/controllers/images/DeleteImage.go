@@ -90,6 +90,11 @@ func DeleteImage(c *gin.Context) {
 // 规则：超管图片仅超管可动；本人或超管放行；否则需 requiredPerm；游客用 UUID+MD5。
 func CheckImageAccessPermission(c *gin.Context, image models.Image, requiredPerm string) bool {
 	userID, role := c.GetInt("user_id"), c.GetInt("user_role")
+	// A bearer token never inherits the full-superadmin cross-user bypass.
+	// Even an admin-owned token may only read or delete its own images.
+	if c.GetString("auth_method") == "api_token" {
+		return userID > 0 && image.UserId == userID
+	}
 	// Guest IDs can never take the real-user/admin fast path, even for legacy
 	// positive IDs or a chosen fingerprint matching a registered user.
 	if role == models.RoleGuest {

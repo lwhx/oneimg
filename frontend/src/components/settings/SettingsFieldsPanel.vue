@@ -164,69 +164,7 @@
                                 <div class="field-hint">仅 <code>model=json</code> 时生效，超出上限按上限返回。</div>
                             </div>
 
-                            <!-- API Token：输入框与按钮分开。
-                                 原布局把按钮绝对定位叠在输入框内部右侧，为此要给输入框留
-                                 112px 右内边距 —— 一是凭据一长就被按钮压掉尾巴（无法读全），
-                                 二是按钮高 36px 撑在 40px 输入框里，上下各差 2px，看着像错位。
-                                 现在两者各自作为一个盒子并排，输入框占满剩余宽度，按钮等高于
-                                 输入框，长凭据可以完整横向滚动。 -->
-                            <div v-show="activeSettingsTab === 'api'" class="setting-group">
-                                <div class="flex flex-wrap items-baseline justify-between gap-2">
-                                    <label class="field-label !mb-0" for="api_token">API Token</label>
-                                    <span v-if="systemSettings.api_token_configured" class="field-hint !mt-0">
-                                        <i class="ri-shield-check-line mr-1 text-emerald-600 dark:text-emerald-400" aria-hidden="true"></i>已配置
-                                    </span>
-                                    <span v-else class="field-hint !mt-0">尚未配置</span>
-                                </div>
-
-                                <div class="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-                                    <input
-                                        id="api_token"
-                                        :value="generatedApiToken"
-                                        readonly
-                                        :type="generatedApiToken ? 'text' : 'password'"
-                                        class="input-modern min-w-0 flex-1 font-mono text-xs sm:text-[13px]"
-                                        :placeholder="generatedApiToken ? '' : (systemSettings.api_token_configured ? '已配置，旧凭据不可读取' : '点击右侧按钮生成')"
-                                        autocomplete="off"
-                                        spellcheck="false"
-                                        @focus="$event.target.select()"
-                                    />
-                                    <!-- 窄屏堆叠时按钮撑满整行（和输入框等宽），
-                                         否则 107px 的按钮挂在 336px 输入框下方，左对齐显得残缺 -->
-                                    <div class="flex shrink-0 gap-2 max-sm:[&>button]:flex-1">
-                                        <button
-                                            v-if="generatedApiToken"
-                                            type="button"
-                                            class="soft-button"
-                                            @click="copyApiToken"
-                                        >
-                                            <i :class="tokenCopied ? 'ri-check-line text-emerald-600 dark:text-emerald-400' : 'ri-file-copy-line'" aria-hidden="true"></i>
-                                            <span>{{ tokenCopied ? '已复制' : '复制' }}</span>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            class="primary-button"
-                                            :disabled="tokenGenerating"
-                                            @click="generateApiToken"
-                                        >
-                                            <i :class="tokenGenerating ? 'ri-loader-4-line animate-spin' : (systemSettings.api_token_configured ? 'ri-refresh-line' : 'ri-key-2-line')" aria-hidden="true"></i>
-                                            <span>{{ tokenGenerating ? '生成中…' : (systemSettings.api_token_configured ? '重新生成' : '生成 Token') }}</span>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="field-hint">凭据仅在生成后显示一次，离开本页后无法读取。重新生成会立即撤销此前凭据。请求头：<code>Authorization: oneimg_token={API Token}</code>。</div>
-                            </div>
-
-                            <!-- 凭据使用信息：放在 Token 下方作为附属，而不是插在字段中间把表单割断 -->
-                            <div v-show="activeSettingsTab === 'api' && Array.isArray(systemSettings.api_credentials)" class="setting-group" aria-label="API 凭据使用信息">
-                                <p v-if="!systemSettings.api_credentials.length" class="field-hint !mt-0">暂无有效 API 凭据。</p>
-                                <div v-for="(credential, index) in systemSettings.api_credentials" :key="index" class="rounded-[var(--radius-sm)] border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-slate-950 dark:text-slate-300">
-                                    <p class="break-words">权限范围：{{ credential.scopes }}</p>
-                                    <p>到期时间：{{ new Date(credential.expires_at).toLocaleString() }}</p>
-                                    <p>最近使用：{{ credential.last_used_at ? new Date(credential.last_used_at).toLocaleString() : '尚未使用' }}</p>
-                                </div>
-                            </div>
-
+                            <!-- 多 Token 的创建、编辑、状态和密钥显示使用独立 APITokenManager 面板。 -->
                             <div v-show="activeSettingsTab === 'api'" class="setting-group">
                                 <label class="field-label" for="random-graph-config">随机图范围</label>
                                 <button id="random-graph-config" type="button" class="soft-button w-full sm:w-auto" @click="generateRandomGraph">配置随机图</button>
@@ -247,7 +185,7 @@
 import { computed, inject } from 'vue';
 import { settingsContext } from '@/utils/settingsAccess.js';
 import { bytesToGb, gbToBytes } from '@/utils/byteSize.js';
-const { systemSettings, activeSettingsTab, activeSettingsTabLabel, presetBuckets, hasPublicImageDomain, publicImageDomainUnavailable, publicImageDomainInputDisabled, publicImageDomainHint, handleFieldBlur, handleSelectChange, generatedApiToken, tokenGenerating, tokenCopied, copyApiToken, generateApiToken, generateRandomGraph } = inject(settingsContext);
+const { systemSettings, activeSettingsTab, activeSettingsTabLabel, presetBuckets, hasPublicImageDomain, publicImageDomainUnavailable, publicImageDomainInputDisabled, publicImageDomainHint, handleFieldBlur, handleSelectChange, generateRandomGraph } = inject(settingsContext);
 
 // 这些页签有本面板要渲染的表单字段
 const FORM_TABS = ['storage', 'image', 'notifications', 'api'];
