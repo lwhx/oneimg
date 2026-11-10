@@ -16,8 +16,8 @@
     <!-- This raw secret stays only in the current Vue component's memory. -->
     <div v-if="issuedSecret" class="mb-5 rounded-lg border border-amber-400 p-4" role="status">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <strong class="text-sm">新 Token 已创建：请立即复制并安全保存</strong>
-        <span class="text-xs text-amber-700 dark:text-amber-300">只显示这一次，刷新页面后不能恢复</span>
+        <strong class="text-sm">{{ issuedAction === 'rotated' ? 'Token 已重新生成' : '新 Token 已创建' }}：{{ issuedTokenName }}，请立即复制并安全保存</strong>
+        <span class="text-xs text-amber-700 dark:text-amber-300">完整密钥仅本次展示，刷新后需重新生成才能获得新密钥</span>
       </div>
       <div class="flex flex-col gap-2 sm:flex-row">
         <input :value="issuedSecret" readonly type="text" aria-label="刚创建的 API Token" class="input-modern min-w-0 flex-1 font-mono text-xs" autocomplete="off" spellcheck="false" @focus="$event.target.select()" />
@@ -77,7 +77,7 @@
 
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h3 class="font-medium">Token 列表 <span class="ml-1 text-sm font-normal text-secondary">有效 {{ activeCount }} / {{ maxActive }} · 共 {{ total }} 条记录</span></h3>
-      <span class="text-xs text-secondary">旧 Token 无法查看明文，可单独撤销</span>
+      <span class="text-xs text-secondary">刚创建的可直接复制；离开页面后可“重置并复制”（原密钥立即失效）</span>
     </div>
     <p v-if="loading && !tokens.length" class="text-sm text-secondary">正在加载 Token…</p>
     <p v-if="!loading && !tokens.length" class="text-sm text-secondary">尚无 Token，请先创建一个。</p>
@@ -94,6 +94,8 @@
             <p v-if="token.token_hint" class="mt-1 font-mono text-xs text-secondary">{{ token.token_hint }}</p>
           </div>
           <div class="flex flex-wrap gap-2">
+            <button v-if="issuedSecret && token.id === issuedTokenId" type="button" class="primary-button" @click="copySecret"><i class="ri-file-copy-line mr-1" aria-hidden="true"></i>{{ copied ? '已复制' : '复制 Token' }}</button>
+            <button v-else-if="!token.legacy && (token.status === 'active' || token.status === 'disabled')" type="button" class="soft-button" :disabled="busy || !!issuedSecret" title="仅重置这一枚 Token，旧密钥立即失效；不修改权限与有效期" @click="rotateToken(token)"><i class="ri-refresh-line mr-1" aria-hidden="true"></i>重置并复制</button>
             <button v-if="!token.legacy && (token.status === 'active' || token.status === 'disabled')" type="button" class="soft-button" :disabled="busy" @click="beginEdit(token)">编辑</button>
             <button v-if="!token.legacy && (token.status === 'active' || token.status === 'disabled')" type="button" class="soft-button" :disabled="busy" @click="toggleToken(token)">{{ token.disabled ? '恢复' : '暂停' }}</button>
             <button v-if="token.status !== 'revoked'" type="button" class="soft-button" :disabled="busy" @click="revokeToken(token)">撤销</button>
@@ -157,6 +159,9 @@ const loading = ref(false)
 const loadError = ref('')
 const busy = ref(false)
 const issuedSecret = ref('')
+const issuedTokenId = ref('')
+const issuedTokenName = ref('')
+const issuedAction = ref('created')
 const copied = ref(false)
 const editingId = ref('')
 const statusLabels = { active: '有效', disabled: '已暂停', expired: '已过期', revoked: '已撤销' }
@@ -226,8 +231,11 @@ async function createToken() {
       name: createForm.name, description: createForm.description,
       scopes: createForm.scopes, expires_at: expiresAt
     } })
-    issuedSecret.value = data.token || ''
-    if (!issuedSecret.value) throw new Error('服务器未返回创建后的 Token')
+    issuedSecret.value = data.token || data.api_token || ''
+    issuedTokenId.value = data.credential?.id || ''
+    issuedTokenName.value = data.credential?.name || createForm.name
+    issuedAction.value = 'created'
+    if (!issuedSecret.value || !issuedTokenId.value) throw new Error('服务器未返回创建后的完整 Token')
     copied.value = false
     await loadTokens(true)
     Message.success('创建成功，请复制并安全保存 Token')
@@ -243,7 +251,34 @@ async function copySecret() {
   } else Message.error('复制失败，请手动选中并复制')
 }
 
-function clearSecret() { issuedSecret.value = ''; copied.value = false }
+function clearSecret() {
+  issuedSecret.value = ''
+  issuedTokenId.value = ''
+  issuedTokenName.value = ''
+  issuedAction.value = 'created'
+  copied.value = false
+}
+
+async function rotateToken(token) {
+  if (busy.value) return
+  if (issuedSecret.value) { Message.error('请先复制并隐藏当前显示的 Token，再操作其他凭据'); return }
+  if (!window.confirm(`确定重新生成「${token.name}」的 Token 吗？\n\n旧密钥会立即失效，使用旧 Token 的 ScriptCat 或其他程序必须更新配置。其他 Token 不受影响。`)) return
+  busy.value = true
+  try {
+    const data = await request(`/api/tokens/${encodeURIComponent(token.id)}/rotate`, { method: 'POST' })
+    const raw = data.token || data.api_token || ''
+    const newId = data.credential?.id || ''
+    if (!raw || !newId) throw new Error('服务器未返回新的完整 Token')
+    issuedSecret.value = raw
+    issuedTokenId.value = newId
+    issuedTokenName.value = data.credential?.name || token.name
+    issuedAction.value = 'rotated'
+    copied.value = false
+    await loadTokens(true)
+    Message.success('重置成功：旧 Token 已失效，请复制新 Token 并更新脚本配置')
+  } catch (e) { Message.error(e.message || '重置失败') }
+  finally { busy.value = false }
+}
 
 function beginEdit(token) {
   if (editingId.value === token.id) { editingId.value = ''; return }
@@ -287,6 +322,7 @@ async function revokeToken(token) {
   busy.value = true
   try {
     await request(`/api/tokens/${encodeURIComponent(token.id)}`, { method: 'DELETE' })
+    if (issuedTokenId.value === token.id) clearSecret()
     if (editingId.value === token.id) editingId.value = ''
     await loadTokens(true)
     Message.success('Token 已撤销')

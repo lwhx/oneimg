@@ -179,6 +179,30 @@ func SetAPITokenStatus(c *gin.Context) {
     c.JSON(200, result.Success("Token 状态已更新", nil))
 }
 
+// RotateAPIToken replaces one token while preserving its scope and expiry.
+// Management requires a signed-in session; bearer tokens cannot call it.
+func RotateAPIToken(c *gin.Context) {
+    if !requireTokenManager(c) {
+        return
+    }
+    id := c.Param("id")
+    if !validManagedTokenID(id) {
+        c.JSON(400, result.Error(400, "Token ID 无效"))
+        return
+    }
+    raw, rotated, err := authsecurity.RotateAPICredential(database.GetDB().DB, c.GetInt("user_id"), id)
+    if err != nil {
+        tokenFailure(c, err)
+        return
+    }
+    c.JSON(http.StatusOK, result.Success("Token 已重新生成，旧 Token 已失效，请立即复制新密钥", gin.H{
+        "token": raw,
+        "api_token": raw,
+        "credential": tokenPublicView(rotated),
+    }))
+}
+
+
 func RevokeAPIToken(c *gin.Context) {
     if !requireTokenManager(c) { return }
     id := c.Param("id")

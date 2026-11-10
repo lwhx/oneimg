@@ -87,3 +87,60 @@ func TestLegacyTokenIsPreservedAndCanBeRevoked(t *testing.T) {
     if err := EnrollLegacyToken(db, settings); err != nil { t.Fatal(err) }
     if _, err := ValidateAPICredential(db, settings, settings.APIToken); !errors.Is(err, ErrToken) { t.Fatal("revoked legacy credential reactivated") }
 }
+
+
+func TestRotateTokenReplacesOnlySelectedSecret(t *testing.T) {
+    db := tokenTestDB(t)
+    expiry := time.Now().Add(30 * 24 * time.Hour)
+    oldSecret, first, err := CreateNamedAPICredential(db, 1, "ScriptCat", "upload", []string{"upload:write"}, expiry)
+    if err != nil { t.Fatal(err) }
+    otherSecret, other, err := CreateNamedAPICredential(db, 1, "Other", "read", []string{"image:read"}, expiry)
+    if err != nil { t.Fatal(err) }
+
+    if _, _, err := RotateAPICredential(db, 2, first.ID); !errors.Is(err, ErrTokenNotFound) {
+        t.Fatalf("cross-account rotation must fail: %v", err)
+    }
+    raw, rotated, err := RotateAPICredential(db, 1, first.ID)
+    if err != nil { t.Fatal(err) }
+    if raw == oldSecret || rotated.ID == first.ID {
+        t.Fatal("rotation did not change credential material")
+    }
+    if rotated.Scopes != first.Scopes || !rotated.ExpiresAt.Equal(first.ExpiresAt) || rotated.OwnerID != first.OwnerID {
+        t.Fatal("rotation changed scope, expiry or owner")
+    }
+    if rotated.TokenHint == "" || rotated.TokenHint == oldSecret {
+        t.Fatal("rotation did not retain a safe display hint")
+    }
+    setting := models.Settings{StartAPI: true}
+    if _, err := ValidateAPICredential(db, setting, oldSecret); !errors.Is(err, ErrToken) {
+        t.Fatal("old credential remained valid")
+    }
+    current, err := ValidateAPICredential(db, setting, raw)
+    if err != nil || current.Scopes != first.Scopes {
+        t.Fatalf("rotated credential failed to authenticate: %v", err)
+    }
+    if _, err := ValidateAPICredential(db, setting, otherSecret); err != nil {
+        t.Fatalf("unrelated token was invalidated: %v", err)
+    }
+    if err := RevokeAPICredential(db, 1, other.ID); err != nil { t.Fatal(err) }
+    if _, _, err := RotateAPICredential(db, 1, other.ID); !errors.Is(err, ErrTokenNotFound) {
+        t.Fatal("revoked token was rotated")
+    }
+    if _, _, err := RotateAPICredential(db, 1, first.ID); !errors.Is(err, ErrTokenNotFound) {
+        t.Fatal("old management handle rotated twice")
+    }
+}
+
+func TestRotateDisabledTokenRemainsDisabled(t *testing.T) {
+    db := tokenTestDB(t)
+    expiry := time.Now().Add(30 * 24 * time.Hour)
+    _, row, err := CreateNamedAPICredential(db, 1, "Paused", "", []string{"image:read"}, expiry)
+    if err != nil { t.Fatal(err) }
+    if err := SetAPICredentialDisabled(db, 1, row.ID, true); err != nil { t.Fatal(err) }
+    newSecret, rotated, err := RotateAPICredential(db, 1, row.ID)
+    if err != nil { t.Fatal(err) }
+    if !rotated.Disabled { t.Fatal("rotation unpaused a paused token") }
+    if _, err := ValidateAPICredential(db, models.Settings{StartAPI: true}, newSecret); !errors.Is(err, ErrToken) {
+        t.Fatal("rotation bypassed paused state")
+    }
+}

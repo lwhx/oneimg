@@ -38,7 +38,7 @@
 1. 登录 OneImg 后台，确保当前账号拥有 `setting:api` 权限，并启用 API（`start_api`）。
 2. 进入“系统设置 → API → API Token 管理”，填写名称（例如 `ScriptCat 图片上传`）、备注和到期时间。
 3. 权限推荐勾选 `image:read` + `upload:write`，**不要为了方便给脚本开放删除或文件夹管理权限**。
-4. 点击“创建 Token”，**立即复制并保存本次返回的明文**。系统只存不可逆摘要，旧 Token 不可再次复制。
+4. 点击“创建 Token”，**点击“复制 Token”按钮**将完整密钥复制到剪贴板；在当前页面的列表中也可复制。刷新后系统只存不可逆摘要，无法恢复原密钥；如果丢失，可对目标 Token 使用“重置并复制”，但旧 Token 会立即失效，脚本需要更新配置。
 5. 将 Token 保存到 ScriptCat 的私有脚本设置（例如 `GM_setValue`），不要硬编码在公开脚本中或写入页面日志。
 
 也可以使用具备后台登录 Cookie 与 `setting:api` 权限的会话发出：
@@ -53,7 +53,7 @@ Cookie: <已登录且有权限的 OneImg 浏览器会话 Cookie>
 
 成功时 HTTP 201、JSON `code:200`，`data.token`（兼容别名 `data.api_token`）只返回一次。**有效期可选 5 分钟至 365 天；同账户可同时保留最多 30 个未过期未撤销 Token。**旧接口 `POST /api/settings/regenerate` 仍可用于创建默认 30 天的 Token，更新后不再撤销其他 Token。
 
-管理 Token 的列表、编辑权限/到期时间、暂停/恢复及撤销，详见 [多 Token 管理接口文档](api-token-management.md)。Token 无法通过 Bearer 自行调用这些管理接口。
+管理 Token 的列表、编辑权限/到期时间、暂停/恢复、重置并复制（`POST /api/tokens/:id/rotate`）及撤销，详见 [多 Token 管理接口文档](api-token-management.md)。Token 无法通过 Bearer 自行调用这些管理接口。
 
 ### 2.2 所有 Token 请求的请求头
 

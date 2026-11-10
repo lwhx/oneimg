@@ -256,6 +256,63 @@ func SetAPICredentialDisabled(db *gorm.DB, owner int, id string, disabled bool) 
     })
 }
 
+// RotateAPICredential atomically replaces only the selected token's secret.
+// The previous digest is invalidated immediately; owner, scope and expiry stay.
+// The new raw credential is returned exactly once.
+func RotateAPICredential(db *gorm.DB, owner int, id string) (string, models.APICredential, error) {
+    var empty models.APICredential
+    if owner <= 0 {
+        return "", empty, ErrTokenNotFound
+    }
+    secret, err := RandomSecret(32)
+    if err != nil {
+        return "", empty, err
+    }
+    raw := "oi_" + secret
+    newID := Digest(raw)
+    hint := "oi_…" + raw[len(raw)-6:]
+    var rotated models.APICredential
+    err = db.Transaction(func(tx *gorm.DB) error {
+        var current models.APICredential
+        if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+            Where("id = ? AND owner_id = ?", id, owner).First(&current).Error; err != nil {
+            if errors.Is(err, gorm.ErrRecordNotFound) {
+                return ErrTokenNotFound
+            }
+            return err
+        }
+        if current.Legacy {
+            return ErrTokenImmutable
+        }
+        now := time.Now()
+        if current.Revoked || !now.Before(current.ExpiresAt) {
+            return ErrTokenNotFound
+        }
+        res := tx.Model(&models.APICredential{}).
+            Where("id = ? AND owner_id = ? AND revoked = ? AND expires_at > ?", id, owner, false, now).
+            Updates(map[string]any{
+                "id": newID, "token_hint": hint, "last_used_at": nil, "updated_at": now,
+            })
+        if res.Error != nil {
+            return res.Error
+        }
+        if res.RowsAffected != 1 {
+            return ErrTokenNotFound
+        }
+        current.ID = newID
+        current.TokenHint = hint
+        current.LastUsedAt = nil
+        current.UpdatedAt = now
+        rotated = current
+        return nil
+    })
+    if err != nil {
+        return "", empty, err
+    }
+    return raw, rotated, nil
+}
+
+
 func RevokeAPICredential(db *gorm.DB, owner int, id string) error {
     now := time.Now()
     res := db.Model(&models.APICredential{}).
