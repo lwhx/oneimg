@@ -69,6 +69,7 @@
           <input id="new-token-custom-expiry" v-model="createForm.customExpiry" class="input-modern" type="datetime-local" required />
         </div>
       </div>
+      <p v-if="createForm.expiry === 'long'" class="text-xs text-amber-700 dark:text-amber-300" role="note">长期 Token 不会自动过期。请仅授予必要权限，发现泄露时立即暂停或撤销。</p>
       <div class="flex flex-wrap items-center gap-3">
         <button class="primary-button" type="submit" :disabled="busy || !scopes.length || !createForm.scopes.length || !!issuedSecret">{{ busy ? '正在创建…' : '创建 Token' }}</button>
         <span v-if="issuedSecret" class="text-xs text-secondary">先保存并隐藏上方 Token，才能继续创建。</span>
@@ -195,6 +196,7 @@ const formatDate = value => {
 }
 
 function localDatetime(value) {
+  if (!value) return ''
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
