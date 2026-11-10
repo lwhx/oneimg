@@ -12,8 +12,9 @@
 services:
   oneimg:
     build: .
-    # 也可改用官方镜像：image: onexru/oneimg-oneimg
-    # 或加载离线包：docker load -i oneImg_Docker_amd64_v3.5.8.tar（镜像名 oneimg:v3.5.8-amd64）
+    # GHCR 已构建轻量镜像：注释上面的 build: .，启用下一行以免本机重新编译：
+    # image: ghcr.io/lwhx/oneimg:latest
+    # 原上游 Docker Hub 镜像：onexru/oneimg-oneimg（不同维护者）
     ports:
       - "${SERVER_PORT:-8080}:${SERVER_PORT:-8080}"
     environment:
