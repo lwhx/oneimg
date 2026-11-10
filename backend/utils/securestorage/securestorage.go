@@ -51,7 +51,7 @@ func Decode(data []byte) ([]byte, bool, error) {
 
 // ReadAll loads and transparently decodes one stored object.
 func ReadAll(reader io.Reader) ([]byte, bool, error) {
-	return ReadAllLimited(reader, 32<<20+64)
+	return ReadAllLimited(reader, config.HardMaxUploadBytes+64)
 }
 
 // ReadAllLimited bounds ciphertext before AES-GCM authentication/allocation.

@@ -1,4 +1,4 @@
-export const DEFAULT_UPLOAD_LIMITS = Object.freeze({ max_upload_files: 10, tag_max_length: 10, random_image_limit: 20 });
+export const DEFAULT_UPLOAD_LIMITS = Object.freeze({ max_upload_files: 20, tag_max_length: 10, random_image_limit: 20 });
 export const RASTER_TYPES = Object.freeze(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 export function uploadLimits(config = {}) {
   const positive = (value, fallback) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : fallback;

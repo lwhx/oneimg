@@ -25,8 +25,19 @@ func TagLength(s models.Settings) int {
 func RandomLimit(s models.Settings) int {
 	return bounded(s.RandomImageLimit, config.DefaultRandomImageLimit, config.HardRandomImageLimit)
 }
-// RequestBytes keeps the existing hard per-file raster ceiling plus multipart overhead.
-func RequestBytes(s models.Settings) int64 { return int64(MaxFiles(s))*(32<<20) + (1 << 20) }
+// RequestBytes enforces a separate total multipart cap, preventing enormous
+// batches from exhausting temporary disk and upload worker capacity.
+func RequestBytes(s models.Settings) int64 {
+    perFile := int64(s.MaxFileSize)
+    if perFile <= 0 || perFile > config.HardMaxUploadBytes {
+        perFile = config.HardMaxUploadBytes
+    }
+    total := int64(MaxFiles(s)) * perFile
+    if total > config.HardMaxUploadRequestBytes {
+        total = config.HardMaxUploadRequestBytes
+    }
+    return total + (1 << 20) // reserved multipart overhead
+}
 func ValidateCount(s models.Settings, count int) error {
 	if count < 1 {
 		return fmt.Errorf("请选择要上传的图片")

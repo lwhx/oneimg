@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"log"
 	"math"
+	configpkg "oneimg/backend/config"
 	"oneimg/backend/models"
 	"os"
 	"path/filepath"
@@ -462,17 +463,17 @@ func ProcessImageWithWatermarkContext(ctx context.Context, reader io.Reader, mim
 	}
 	defer release()
 
-	buf, err := io.ReadAll(io.LimitReader(reader, (32<<20)+1))
+	buf, err := io.ReadAll(io.LimitReader(reader, configpkg.HardMaxUploadBytes+1))
 	if err != nil {
 		log.Printf("读取图片数据失败: %v", err)
 		return nil, fmt.Errorf("读取图片数据失败: %v", err)
 	}
 
-	if len(buf) > 32<<20 {
+	if int64(len(buf)) > configpkg.HardMaxUploadBytes {
 		return nil, fmt.Errorf("图片超过水印处理限制")
 	}
 	config, _, err := image.DecodeConfig(bytes.NewReader(buf))
-	if err != nil || config.Width <= 0 || config.Height <= 0 || config.Width > 8192 || config.Height > 8192 || int64(config.Width)*int64(config.Height) > 16_000_000 {
+	if err != nil || config.Width <= 0 || config.Height <= 0 || config.Width > configpkg.HardMaxImageDimension || config.Height > configpkg.HardMaxImageDimension || int64(config.Width)*int64(config.Height) > configpkg.HardMaxImagePixels {
 		return nil, fmt.Errorf("图片尺寸超过水印处理限制")
 	}
 	img, format, err := image.Decode(bytes.NewReader(buf))

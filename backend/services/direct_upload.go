@@ -2,12 +2,13 @@ package services
 
 import (
 	"errors"
+	"oneimg/backend/config"
 	"regexp"
 	"sync"
 	"time"
 )
 
-const DirectUploadMaxBytes int64 = 32 << 20
+const DirectUploadMaxBytes int64 = config.HardMaxUploadBytes
 
 const directPutTTL = 15 * time.Minute
 

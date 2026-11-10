@@ -134,7 +134,7 @@ func directValidRequest(r CreateDirectUploadRequest, s models.Settings) error {
 		max = DirectUploadMaxBytes
 	}
 	if r.Size <= 0 || r.Size > max {
-		return directError(413, "file_too_large", "文件超过当前上传大小限制（直传最多 32 MiB）", false)
+		return directError(413, "file_too_large", fmt.Sprintf("文件超过当前上传大小限制（直传最多 %d MiB）", DirectUploadMaxBytes>>20), false)
 	}
 	allowed := false
 	for _, m := range strings.Split(s.AllowedTypes, ",") {

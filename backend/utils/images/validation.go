@@ -2,13 +2,14 @@ package images
 
 import (
  "mime"
+ "oneimg/backend/config"
  "path"
  "strings"
  "unicode"
 )
 
 // Limits apply even when an administrator configures an unbounded upload size.
-const MaxUploadBytes int64 = 32 << 20
+const MaxUploadBytes int64 = config.HardMaxUploadBytes
 var processingSlots = make(chan struct{}, 2)
 
 // AcquireProcessing bounds simultaneous raster allocations across legacy and

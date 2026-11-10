@@ -10,11 +10,12 @@ import (
 	"strings"
 
 	"github.com/chai2010/webp"
+	"oneimg/backend/config"
 	"oneimg/backend/models"
 )
 
-const DirectMaxPixels = 16_000_000
-const DirectMaxDimension = 8192
+const DirectMaxPixels = config.HardMaxImagePixels
+const DirectMaxDimension = config.HardMaxImageDimension
 
 var ErrImageDimensions = errors.New("image dimensions exceed limit")
 
