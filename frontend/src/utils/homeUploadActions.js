@@ -134,6 +134,12 @@ const uploadFiles = async (files) => {
   }
 
   if (directEnabled()) { await startDirectFiles(files); return; }
+  // Direct uploads transfer each file independently; multipart requests share this budget.
+  const maxBatchBytes = Number(uploadConfig.value?.max_batch_size) || 0;
+  if (maxBatchBytes > 0 && files.reduce((sum, file) => sum + file.size, 0) > maxBatchBytes) {
+    Message.warning(`本批图片总大小超过 ${Math.floor(maxBatchBytes / 1048576)} MiB，请分批上传`);
+    return;
+  }
   legacyUploading.value = true;
   legacyController = new AbortController();
   uploadingCount.value = files.length;

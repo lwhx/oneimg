@@ -20,6 +20,7 @@ type settingFieldMetadata struct {
 func configurableFieldMetadata() map[string]settingFieldMetadata {
 	return map[string]settingFieldMetadata{
 		"max_upload_files":   {Type: "integer", Default: config.DefaultMaxUploadFiles, Min: 1, Max: config.HardMaxUploadFiles, Permission: "setting:upload", Description: "每次请求最多上传文件数"},
+		"max_file_size":      {Type: "integer", Default: config.DefaultMaxUploadBytes, Min: 1, Max: int(config.HardMaxUploadBytes), Permission: "setting:upload", Description: "单张图片最大字节数"},
 		"tag_max_length":     {Type: "integer", Default: config.DefaultTagMaxLength, Min: 1, Max: config.HardTagMaxLength, Permission: "setting:upload", Description: "标签最多 Unicode 字符数"},
 		"random_image_limit": {Type: "integer", Default: config.DefaultRandomImageLimit, Min: 1, Max: config.HardRandomImageLimit, Permission: "setting:api", Description: "随机图片接口每次最多返回数量"},
 		// 账号默认上传配额，单位字节。0 = 不限（由 validateSettingData 单独放行，

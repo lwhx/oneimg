@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"oneimg/backend/config"
 	"oneimg/backend/models"
 	"oneimg/backend/utils/result"
 	"oneimg/backend/utils/securestorage"
@@ -20,7 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const maxProcessedObjectBytes int64 = 32 << 20
+const maxProcessedObjectBytes int64 = config.HardMaxUploadBytes
 
 func unsafeImageExtension(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))

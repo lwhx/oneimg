@@ -62,12 +62,12 @@
                                 <div class="grid gap-4 sm:grid-cols-3 md:gap-3">
                                     <div class="setting-group">
                                         <label class="field-label" for="max_file_size">最大上传大小</label>
-                                        <input id="max_file_size" v-model="systemSettings.max_file_size" type="number" class="input-modern" placeholder="按字节计算" @blur="handleFieldBlur('max_file_size', systemSettings.max_file_size)" />
-                                        <div class="field-hint">字节，默认 10485760</div>
+                                        <input id="max_file_size" v-model="systemSettings.max_file_size" type="number" min="1" max="67108864" step="1" class="input-modern" placeholder="按字节计算" @blur="handleFieldBlur('max_file_size', systemSettings.max_file_size)" />
+                                        <div class="field-hint">字节，新安装默认 20971520（20 MiB），最高 67108864（64 MiB）</div>
                                     </div>
                                     <div v-for="field in [{ key: 'max_upload_files', label: '每批文件数' }, { key: 'tag_max_length', label: '标签字符数' }]" v-show="systemSettings[field.key] !== undefined" :key="field.key" class="setting-group">
                                         <label class="field-label" :for="field.key">{{ field.label }}</label>
-                                        <input :id="field.key" v-model.number="systemSettings[field.key]" type="number" min="1" max="50" step="1" class="input-modern" @blur="handleFieldBlur(field.key, systemSettings[field.key])" />
+                                        <input :id="field.key" v-model.number="systemSettings[field.key]" type="number" min="1" :max="field.key === 'max_upload_files' ? 100 : 50" step="1" class="input-modern" @blur="handleFieldBlur(field.key, systemSettings[field.key])" />
                                     </div>
                                 </div>
 

@@ -327,11 +327,13 @@ docker run -d --name oneimg -p 8080:8080 \
 | `DEFAULT_USER` / `DEFAULT_PASS` | `admin` / 空 | 初始管理员；`DEFAULT_PASS` 留空则随机生成 |
 | `SESSION_SECRET` | 空（自动持久化） | 会话与 OIDC/CAS state 签名密钥，留空时生成到 `data/.session_secret` |
 | `CONFIG_SECRET` | 空（自动持久化） | 配置与图片加密密钥，留空时生成到 `data/.config_secret`；显式设置必须 ≥32 字符且不可更换 |
-| `MAX_FILE_SIZE` | `10485760` | 单文件上限（字节），另有 32MB 硬上限 |
+| `MAX_FILE_SIZE` | `20971520` | 新安装默认 20 MiB，普通存储单文件最大 64 MiB |
 | `ALLOWED_TYPES` | jpeg/png/gif/webp | 允许的 MIME，逗号分隔 |
 | `TRUSTED_PROXIES` | 空 | 反代信任的 IP/CIDR，逗号分隔；留空不信任任何代理，非法条目拒绝启动（见上文「反向代理与限流」） |
 
 > 用户默认配额 `default_user_quota`（默认 10 GiB）不是环境变量，在「系统设置 → 上传」中配置；个体配额优先于该值。
+
+图片上传保护：新安装默认每批 20 张、每张 20 MiB；普通存储支持每张最高 64 MiB、每批最多 100 张。普通 multipart 批量请求总计不超过 256 MiB（另加 1 MiB 表单开销）。图片任意一边不超过 16000 像素，总像素不超过 2400 万。Telegram 存储驱动继续保持 20 MiB 单对象限制。已有部署数据库中的上传设置不自动覆盖，升级后可自行调整。
 
 完整清单见 [`.env.example`](.env.example)。
 

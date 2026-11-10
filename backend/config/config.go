@@ -134,7 +134,7 @@ DB_CONN_MAX_IDLE_TIME=5m
 
 # 文件上传配置
 UPLOAD_ROOT=./uploads
-MAX_FILE_SIZE=10485760
+MAX_FILE_SIZE=20971520
 ALLOWED_TYPES=image/jpeg,image/png,image/gif,image/webp
 
 # 默认用户配置
@@ -261,7 +261,7 @@ func NewConfig() {
 	}
 
 	// 3. 解析配置项
-	maxFileSize, _ := strconv.ParseInt(getEnv("MAX_FILE_SIZE", "10485760"), 10, 64)
+	maxFileSize, _ := strconv.ParseInt(getEnv("MAX_FILE_SIZE", "20971520"), 10, 64)
 	allowedTypes := strings.Split(getEnv("ALLOWED_TYPES", "image/jpeg,image/png,image/gif,image/webp"), ",")
 	port := getEnv("SERVER_PORT", getEnv("PORT", "8080"))
 	appURL := getEnv("APP_URL", "http://localhost:"+port)

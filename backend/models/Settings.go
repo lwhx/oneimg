@@ -63,10 +63,10 @@ type Settings struct {
 	CASSuperAdminUsername  string `gorm:"column:cas_super_admin_username;default:''" json:"cas_super_admin_username"`
 
 	// 默认上传配置
-	MaxUploadFiles   int    `gorm:"column:max_upload_files;default:10" json:"max_upload_files"`
+	MaxUploadFiles   int    `gorm:"column:max_upload_files;default:20" json:"max_upload_files"`
 	TagMaxLength     int    `gorm:"column:tag_max_length;default:10" json:"tag_max_length"`
 	RandomImageLimit int    `gorm:"column:random_image_limit;default:20" json:"random_image_limit"`
-	MaxFileSize      int    `gorm:"column:max_file_size;default:10485760" json:"max_file_size"` // 文件最大上传大小
+	MaxFileSize      int    `gorm:"column:max_file_size;default:20971520" json:"max_file_size"` // 文件最大上传大小
 	// DefaultUserQuota 是单个账号的总上传配额（字节），0 表示不限。
 	//
 	// 只约束「按用户累计的已用空间」，与存储桶自身的 capacity 是两件事：

@@ -271,6 +271,7 @@ func GetUploadConfig(c *gin.Context) {
 		"multi_storage_sync": setting.MultiStorageSync,
 		"max_upload_files":   uploadpolicy.MaxFiles(setting),
 		"max_file_size":      images.UploadByteLimit(int64(setting.MaxFileSize)),
+		"max_batch_size":     uploadpolicy.RequestBytes(setting) - (1 << 20),
 		"allowed_types":      effectiveUploadMIMEs(setting),
 		"tag_max_length":     uploadpolicy.TagLength(setting),
 		"random_image_limit": uploadpolicy.RandomLimit(setting),
