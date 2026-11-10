@@ -7,8 +7,8 @@
 
 - 同一账户可并存多个 Token：每个有名称、备注、独立授权、到期时间、启停和撤销状态。
 - 创建新 Token **不会撤销其他 Token**。最多 30 个未过期、未撤销的 Token（暂停也占名额），超额返回 HTTP 409。
-- Token 明文仅在创建或主动重置时返回一次。列表里可一键复制当前页面刚生成的 Token；刷新后因数据库只存 SHA-256 摘要，旧明文无法恢复，但支持**单个 Token 重置并复制**（旧密钥立即失效，其他 Token 不受影响）。列表仅显示末尾六位提示、名称和元数据。
-- 有效期可在 5 分钟到 365 天之间选择；**不允许永不过期**，过期及已撤销的 Token 不可重新启用。
+- **重复复制不轮换**：新创建的 Token 同时保存 SHA-256 鉴权摘要和由 `CONFIG_SECRET` 派生密钥加密的 AES-256-GCM 副本。已登录且有管理权限的用户可以随时点击“复制 Token”，每次获得的都是同一密钥，Token ID、权限、有效期完全不变。加密副本不会出现在列表、日志或普通查询响应中；仅按需解密返回。
+- 支持 5 分钟至 365 天的限期 Token，以及**长期（不过期）**选项。长期必须主动勾选，默认仍为 30 天；长期 Token 可随时暂停、恢复或撤销，最多计入 30 个有效 Token 配额。
 - 超管 Token 也**不能**借超管权限访问或删除其他用户的图片，不能操作系统设置或管理其他 Token。
 - Token 管理接口只接受已登录的 Cookie 会话，且账户必须具有 `setting:api`；任何 Bearer Token 都不能访问管理接口。
 - `start_api=false` 时所有 Bearer Token 停止生效；这不会删除 Token。
@@ -98,7 +98,7 @@ Content-Type: application/json
 ```json
 {
   "code": 200,
-  "message": "Token 已创建，明文仅显示本次",
+  "message": "Token 已创建，可随时在后台重新复制",
   "data": {
     "token": "oi_<只显示一次的实际密钥>",
     "api_token": "oi_<相同密钥兼容字段>",
@@ -107,11 +107,25 @@ Content-Type: application/json
 }
 ```
 
-创建时可以点击“复制 Token”；在当前页面 Token 列表中也会显示“复制 Token”。创建或主动重置的响应均仅展示一次明文密钥。务必立即保存到 ScriptCat 私有设置中，不要上传、打印或提交到 GitHub。
+创建后及未来登录后台时均可点击“复制 Token”获取**同一个原密钥**，不会导致脚本失效。密钥仍应妥善保管，切勿写入公开代码或日志。
 
-### 1.3 编辑 Token
+### 1.3 编辑 Token 与长期有效
 
-`PUT /api/tokens/:id`；请求体与创建相同，**需要提交完整** `name`、`description`、`scopes`、`expires_at`。编辑会立即生效，包括扩大或缩小权限和更新有效期。已经过期、已经撤销或 legacy Token 不可编辑；此时请新建 Token。
+`PUT /api/tokens/:id`；请求体与创建相同，提交完整 `name`、`description`、`scopes` 与有效期设置。限期 Token 使用 `"never_expires":false` + `"expires_at":"RFC3339 时间"`，有效期最多 365 天；长期 Token 则使用：
+
+```json
+{
+  "name": "ScriptCat 长期上传",
+  "description": "永久有效，上传专用",
+  "scopes": ["upload:write", "image:read"],
+  "never_expires": true,
+  "expires_at": null
+}
+```
+
+`POST /api/tokens` 新建也接受以上长期选项。长期 Token 的列表响应中 `never_expires:true` 且 `expires_at:null`，后台显示“长期（不过期）”；数据库内部使用带明确标识的远期过期哨兵保障旧版 SQL 校验兼容。
+
+编辑权限与有效期会即时生效，但**不重新生成密钥**。扩大权限尤其是长期 Token 的权限前应谨慎；已经过期、已撤销或 legacy Token 不可编辑。
 
 ### 1.4 暂停 / 恢复 Token
 
@@ -129,41 +143,38 @@ Content-Type: application/json
 
 永久撤销不可撤回，相关外部程序立即失去授权；不会影响同一账户其他 Token。
 
-### 1.6 一键复制与重新生成（安全恢复）
+### 1.6 复制原 Token（不会轮换）
 
-创建成功后，页面顶部和该 Token 的列表项都提供 **“复制 Token”** 按钮；只需点击即可复制完整 Bearer 密钥，无须手动选中文字。
+后台 Token 列表中点击 **“复制 Token”**，触发：
 
-刷新、离开页面或点击“已保存，隐藏”后，完整 Token 不再存于浏览器内存。若需要重新拿到一枚可复制的密钥，列表中点击 **“重置并复制”**，系统会要求确认，并通过以下会话接口生成新的密钥：
+`POST /api/tokens/:id/reveal`
 
-`POST /api/tokens/:id/rotate`
-
-需要已登录后台 Cookie + `setting:api` 权限；不接受 Bearer Token 自行重置。
-
-成功示例：
+该接口只接受已登录的 **Cookie 会话** 且需 `setting:api` 权限。它只解密已保存的 AES-GCM 密文，**不轮换、不延长有效期、不改变权限、状态或 ID**；返回 `Cache-Control: no-store` 和 `Pragma: no-cache`，不允许使用 Bearer Token 自助读取。
 
 ```json
 {
   "code": 200,
-  "message": "Token 已重新生成，旧 Token 已失效，请立即复制新密钥",
+  "message": "已读取原 API Token，密钥保持不变",
   "data": {
-    "token": "oi_<只展示这一次的新密钥>",
-    "api_token": "oi_<同一密钥的兼容字段>",
-    "credential": {
-      "id": "<重置后的新管理 ID>",
-      "name": "ScriptCat 图片上传",
-      "scopes": ["image:read", "upload:write"]
-    }
+    "token": "oi_<本次与上次完全相同的密钥>",
+    "api_token": "oi_<相同密钥>"
   }
 }
 ```
 
-**影响范围：**仅重置目标 Token，保留名称、权限、所属账户、到期时间及暂停状态。**旧密钥立即失效**，ScriptCat 等客户端需要替换为新 Token；其他 Token 不受影响。已经到期、已撤销或旧版 legacy 凭据不能重置，请创建新 Token 替换。
+复制后密钥可暂时显示在界面上供手动复制，点击“已保存，隐藏”即可清除页面展示。请注意：加密副本能够恢复完整密钥，因此后台登录账号及持久化的 `CONFIG_SECRET` 都必须妥善保护。
 
-### 1.7 兼容旧接口
+### 1.7 仅主动操作时才轮换密钥
+
+`POST /api/tokens/:id/rotate` 对应单独的 **“重置密钥”** 按钮，要求二次确认。只有主动确认后才会生成新密钥并立即废弃目标 Token 的旧密钥；权限与有效期保持不变，不影响其他 Token。之后新密钥同样可以重复复制。
+
+**历史 Token 兼容：**此次升级前已创建、只保存摘要的 Token 没有加密副本，无法恢复原密钥。它们仍可正常鉴权；若希望日后重复复制，需要主动使用“重置密钥”一次并同步更新 ScriptCat 配置。旧版 legacy 凭据不可修改或轮换，须创建新的 Token。
+
+### 1.8 兼容旧接口
 
 `POST /api/settings/regenerate` 为历史兼容接口（Cookie 会话），更新后会**新增**一个默认权限、30 天到期的 Token，**不会再全局撤销旧 Token**。新脚本优先使用 `POST /api/tokens`。
 
-旧版已经签发的 Token 保留原始有效期与授权。旧版凭据会以“历史 API Token”呈现在列表中，允许撤销，但不能编辑或重置，也无法读取完整明文。
+旧版 legacy 凭据保留原始有效期与授权，会以“历史 API Token”呈现在列表中，允许撤销，但不能编辑或重置。升级前创建的非 legacy Token 仍正常可用；其原密钥仅在主动轮换一次后才能开启重复复制。
 
 ## 二、使用 Token 调用图片 API
 
@@ -194,7 +205,7 @@ curl -X POST "https://img.example.com/api/upload/images" \
 | 409 | 单账户有效 Token 上限 30 个；legacy Token 不能编辑 |
 | 500 | 数据库或服务异常 |
 
-数据库使用 GORM `AutoMigrate`，在原 `api_credentials` 表追加名称、备注、提示、禁用和撤销时间等字段；旧 Token 摘要、权限和有效期不被清空。既有部署升级后应先进行数据库备份，确认已存在的 ScriptCat Token 仍可上传，再逐步替换为新命名 Token。
+数据库使用 GORM `AutoMigrate`，在原 `api_credentials` 表追加 `encrypted_token` 和 `never_expires` 字段；旧 Token 摘要、权限及有效期不被覆盖。新 Token 密文绑定到自身 SHA-256 ID，密钥来自持续保存的 `CONFIG_SECRET`；丢失或更换此密钥将导致无法再复制历史 Token 的原密钥，但不会自动轮换或撤销它们。升级前请备份数据库与 `data/.config_secret`，升级后确认已有 ScriptCat Token 仍能上传。
 
 **脚本跨站请求提示：**多 Token 改造本身不改变 OneImg 的 `SameOriginWrites` / `Sec-Fetch-Site` 策略。ScriptCat 的 `GM_xmlhttpRequest` 仍须在真实浏览器中验证；浏览器扩展的跨站请求可能被 OneImg 的 Origin 检查拦截。不要因此全局关闭跨站请求保护。
 

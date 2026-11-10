@@ -16,8 +16,8 @@
     <!-- This raw secret stays only in the current Vue component's memory. -->
     <div v-if="issuedSecret" class="mb-5 rounded-lg border border-amber-400 p-4" role="status">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <strong class="text-sm">{{ issuedAction === 'rotated' ? 'Token 已重新生成' : '新 Token 已创建' }}：{{ issuedTokenName }}，请立即复制并安全保存</strong>
-        <span class="text-xs text-amber-700 dark:text-amber-300">完整密钥仅本次展示，刷新后需重新生成才能获得新密钥</span>
+        <strong class="text-sm">{{ issuedAction === 'rotated' ? 'Token 已重新生成' : issuedAction === 'revealed' ? '已读取原 Token（未轮换）' : '新 Token 已创建' }}：{{ issuedTokenName }}，请立即复制并安全保存</strong>
+        <span class="text-xs text-amber-700 dark:text-amber-300">完整 Token 已加密保存；关闭或刷新页面后可在列表再次复制，不会轮换密钥</span>
       </div>
       <div class="flex flex-col gap-2 sm:flex-row">
         <input :value="issuedSecret" readonly type="text" aria-label="刚创建的 API Token" class="input-modern min-w-0 flex-1 font-mono text-xs" autocomplete="off" spellcheck="false" @focus="$event.target.select()" />
@@ -60,6 +60,7 @@
             <option value="90">90 天</option>
             <option value="180">180 天</option>
             <option value="365">365 天</option>
+            <option value="long">长期（不过期，可手动撤销）</option>
             <option value="custom">自定义日期时间</option>
           </select>
         </div>
@@ -71,13 +72,13 @@
       <div class="flex flex-wrap items-center gap-3">
         <button class="primary-button" type="submit" :disabled="busy || !scopes.length || !createForm.scopes.length || !!issuedSecret">{{ busy ? '正在创建…' : '创建 Token' }}</button>
         <span v-if="issuedSecret" class="text-xs text-secondary">先保存并隐藏上方 Token，才能继续创建。</span>
-        <span v-else class="text-xs text-secondary">创建不会使其他 Token 失效。无“永不过期”选项。</span>
+        <span v-else class="text-xs text-secondary">创建不会影响其他 Token；长期密钥泄露风险更高，建议只授权上传所需权限。</span>
       </div>
     </form>
 
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h3 class="font-medium">Token 列表 <span class="ml-1 text-sm font-normal text-secondary">有效 {{ activeCount }} / {{ maxActive }} · 共 {{ total }} 条记录</span></h3>
-      <span class="text-xs text-secondary">刚创建的可直接复制；离开页面后可“重置并复制”（原密钥立即失效）</span>
+      <span class="text-xs text-secondary">点击“复制 Token”可重复复制原密钥，不会轮换；“重置密钥”是独立的危险操作</span>
     </div>
     <p v-if="loading && !tokens.length" class="text-sm text-secondary">正在加载 Token…</p>
     <p v-if="!loading && !tokens.length" class="text-sm text-secondary">尚无 Token，请先创建一个。</p>
@@ -92,10 +93,12 @@
             </div>
             <p v-if="token.description" class="mt-1 break-words text-xs text-secondary">{{ token.description }}</p>
             <p v-if="token.token_hint" class="mt-1 font-mono text-xs text-secondary">{{ token.token_hint }}</p>
+            <p v-if="!token.legacy && !token.can_reveal && (token.status === 'active' || token.status === 'disabled')" class="mt-1 text-xs text-amber-700 dark:text-amber-300">旧版 Token 未保存加密副本：如需再次复制，请主动“重置密钥”一次，之后可重复复制。</p>
           </div>
           <div class="flex flex-wrap gap-2">
             <button v-if="issuedSecret && token.id === issuedTokenId" type="button" class="primary-button" @click="copySecret"><i class="ri-file-copy-line mr-1" aria-hidden="true"></i>{{ copied ? '已复制' : '复制 Token' }}</button>
-            <button v-else-if="!token.legacy && (token.status === 'active' || token.status === 'disabled')" type="button" class="soft-button" :disabled="busy || !!issuedSecret" title="仅重置这一枚 Token，旧密钥立即失效；不修改权限与有效期" @click="rotateToken(token)"><i class="ri-refresh-line mr-1" aria-hidden="true"></i>重置并复制</button>
+            <button v-else-if="token.can_reveal && (token.status === 'active' || token.status === 'disabled')" type="button" class="primary-button" :disabled="busy" title="复制原 Token，不修改密钥或有效期" @click="copyStoredToken(token)"><i class="ri-file-copy-line mr-1" aria-hidden="true"></i>复制 Token</button>
+            <button v-if="!token.legacy && (token.status === 'active' || token.status === 'disabled')" type="button" class="soft-button" :disabled="busy || !!issuedSecret" title="安全操作：只在主动确认后重置密钥，原密钥会立即失效" @click="rotateToken(token)"><i class="ri-refresh-line mr-1" aria-hidden="true"></i>重置密钥</button>
             <button v-if="!token.legacy && (token.status === 'active' || token.status === 'disabled')" type="button" class="soft-button" :disabled="busy" @click="beginEdit(token)">编辑</button>
             <button v-if="!token.legacy && (token.status === 'active' || token.status === 'disabled')" type="button" class="soft-button" :disabled="busy" @click="toggleToken(token)">{{ token.disabled ? '恢复' : '暂停' }}</button>
             <button v-if="token.status !== 'revoked'" type="button" class="soft-button" :disabled="busy" @click="revokeToken(token)">撤销</button>
@@ -106,7 +109,7 @@
         </div>
         <div class="mt-2 grid gap-1 text-xs text-secondary sm:grid-cols-3">
           <p>创建：{{ formatDate(token.created_at) }}</p>
-          <p>到期：{{ formatDate(token.expires_at) }}</p>
+          <p>到期：{{ token.never_expires ? '长期（不过期）' : formatDate(token.expires_at) }}</p>
           <p>最近使用：{{ token.last_used_at ? formatDate(token.last_used_at) : '尚未使用' }}</p>
         </div>
 
@@ -124,7 +127,11 @@
               </label>
             </div>
           </fieldset>
-          <label class="block text-xs">到期时间（本地时间）
+          <label class="flex items-center gap-2 text-xs">
+            <input v-model="editForm.neverExpires" type="checkbox" />
+            长期有效（不过期，可随时暂停或撤销）
+          </label>
+          <label v-if="!editForm.neverExpires" class="block text-xs">到期时间（本地时间）
             <input v-model="editForm.expiresAt" type="datetime-local" class="input-modern mt-1" required />
           </label>
           <p class="text-xs text-secondary">修改权限将立即影响现有 Token。扩大权限前请确认该 Token 没有泄露；过期或已撤销的 Token 不能恢复。</p>
@@ -166,7 +173,7 @@ const copied = ref(false)
 const editingId = ref('')
 const statusLabels = { active: '有效', disabled: '已暂停', expired: '已过期', revoked: '已撤销' }
 const createForm = reactive({ name: 'ScriptCat 图片上传', description: '', scopes: ['image:read', 'upload:write'], expiry: '30', customExpiry: '' })
-const editForm = reactive({ name: '', description: '', scopes: [], expiresAt: '' })
+const editForm = reactive({ name: '', description: '', scopes: [], expiresAt: '', neverExpires: false })
 
 async function request(path, { method = 'GET', data } = {}) {
   const response = await fetch(path, {
@@ -194,6 +201,7 @@ function localDatetime(value) {
 }
 
 function isoExpiry(mode, custom) {
+  if (mode === 'long') return null
   const raw = mode === 'custom' ? custom : new Date(Date.now() + Number(mode) * 86400000).toISOString()
   const date = new Date(raw)
   if (Number.isNaN(date.getTime())) throw new Error('请选择有效的到期时间')
@@ -229,7 +237,7 @@ async function createToken() {
   try {
     const data = await request('/api/tokens', { method: 'POST', data: {
       name: createForm.name, description: createForm.description,
-      scopes: createForm.scopes, expires_at: expiresAt
+      scopes: createForm.scopes, expires_at: expiresAt, never_expires: createForm.expiry === 'long'
     } })
     issuedSecret.value = data.token || data.api_token || ''
     issuedTokenId.value = data.credential?.id || ''
@@ -275,8 +283,29 @@ async function rotateToken(token) {
     issuedAction.value = 'rotated'
     copied.value = false
     await loadTokens(true)
-    Message.success('重置成功：旧 Token 已失效，请复制新 Token 并更新脚本配置')
+    Message.success('重置成功：旧 Token 已失效，新密钥之后可重复复制')
   } catch (e) { Message.error(e.message || '重置失败') }
+  finally { busy.value = false }
+}
+
+// Copy uses a separate read-only management endpoint and NEVER calls /rotate.
+async function copyStoredToken(token) {
+  if (busy.value) return
+  if (issuedSecret.value) { Message.error('请先保存并隐藏当前显示的 Token'); return }
+  busy.value = true
+  try {
+    const data = await request(`/api/tokens/${encodeURIComponent(token.id)}/reveal`, { method: 'POST' })
+    const raw = data.token || data.api_token || ''
+    if (!raw) throw new Error('未能读取原 Token')
+    issuedSecret.value = raw
+    issuedTokenId.value = token.id
+    issuedTokenName.value = token.name
+    issuedAction.value = 'revealed'
+    copied.value = false
+    // Also show the original secret above in case the clipboard is blocked
+    // by browser user-activation settings after an asynchronous request.
+    await copySecret()
+  } catch (err) { Message.error(err.message || '复制失败') }
   finally { busy.value = false }
 }
 
@@ -287,17 +316,18 @@ function beginEdit(token) {
   editForm.description = token.description || ''
   editForm.scopes = [...(token.scopes || [])]
   editForm.expiresAt = localDatetime(token.expires_at)
+  editForm.neverExpires = !!token.never_expires
 }
 
 async function saveEdit(token) {
   if (busy.value || !editForm.scopes.length) return
   let expiry
-  try { expiry = isoExpiry('custom', editForm.expiresAt) } catch (e) { Message.error(e.message); return }
+  try { expiry = editForm.neverExpires ? null : isoExpiry('custom', editForm.expiresAt) } catch (e) { Message.error(e.message); return }
   busy.value = true
   try {
     await request(`/api/tokens/${encodeURIComponent(token.id)}`, { method: 'PUT', data: {
       name: editForm.name, description: editForm.description,
-      scopes: editForm.scopes, expires_at: expiry
+      scopes: editForm.scopes, expires_at: expiry, never_expires: editForm.neverExpires
     } })
     editingId.value = ''
     await loadTokens(true)

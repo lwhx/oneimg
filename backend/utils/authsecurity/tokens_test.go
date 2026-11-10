@@ -4,7 +4,9 @@ import (
     "errors"
     "testing"
     "time"
+    "strings"
 
+    "oneimg/backend/config"
     "oneimg/backend/models"
 
     "gorm.io/driver/sqlite"
@@ -13,6 +15,9 @@ import (
 
 func tokenTestDB(t *testing.T) *gorm.DB {
     t.Helper()
+    prevConfig := config.App
+    config.App = &config.Config{ConfigSecret: strings.Repeat("T", 48)}
+    t.Cleanup(func() { config.App = prevConfig })
     db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
     if err != nil { t.Fatal(err) }
     sqlDB, err := db.DB()
@@ -143,4 +148,110 @@ func TestRotateDisabledTokenRemainsDisabled(t *testing.T) {
     if _, err := ValidateAPICredential(db, models.Settings{StartAPI: true}, newSecret); !errors.Is(err, ErrToken) {
         t.Fatal("rotation bypassed paused state")
     }
+}
+
+
+func TestRevealDoesNotRotateOrMutateToken(t *testing.T) {
+    db := tokenTestDB(t)
+    expiry := time.Now().Add(30 * 24 * time.Hour)
+    raw, row, err := CreateNamedAPICredential(db, 1, "ScriptCat", "copy", []string{"upload:write"}, expiry)
+    if err != nil { t.Fatal(err) }
+
+    var persisted models.APICredential
+    if err := db.First(&persisted, "id = ?", row.ID).Error; err != nil { t.Fatal(err) }
+    if persisted.EncryptedToken == "" || strings.Contains(persisted.EncryptedToken, raw) {
+        t.Fatal("API Token must have a ciphertext copy, not plaintext")
+    }
+    for i := 0; i < 3; i++ {
+        copied, err := RevealAPICredential(db, 1, row.ID)
+        if err != nil || copied != raw { t.Fatalf("copy %d changed secret or failed: %v", i, err) }
+    }
+    var after models.APICredential
+    if err := db.First(&after, "id = ?", row.ID).Error; err != nil { t.Fatal(err) }
+    if after.ID != row.ID || after.EncryptedToken != persisted.EncryptedToken ||
+        !after.ExpiresAt.Equal(persisted.ExpiresAt) || after.Scopes != persisted.Scopes ||
+        after.UpdatedAt != persisted.UpdatedAt || after.LastUsedAt != nil {
+        t.Fatal("reading a token mutated its record")
+    }
+    if _, err := ValidateAPICredential(db, models.Settings{StartAPI: true}, raw); err != nil {
+        t.Fatalf("original token stopped working after copy: %v", err)
+    }
+    if _, err := RevealAPICredential(db, 2, row.ID); !errors.Is(err, ErrTokenNotFound) {
+        t.Fatalf("other account read token: %v", err)
+    }
+    if err := SetAPICredentialDisabled(db, 1, row.ID, true); err != nil { t.Fatal(err) }
+    if copied, err := RevealAPICredential(db, 1, row.ID); err != nil || copied != raw {
+        t.Fatalf("owner should still be able to copy a paused token: %v", err)
+    }
+    if err := RevokeAPICredential(db, 1, row.ID); err != nil { t.Fatal(err) }
+    if _, err := RevealAPICredential(db, 1, row.ID); !errors.Is(err, ErrTokenNotFound) {
+        t.Fatalf("revoked token copied: %v", err)
+    }
+    if err := db.First(&after, "id = ?", row.ID).Error; err != nil { t.Fatal(err) }
+    if after.EncryptedToken != "" { t.Fatal("revoke must wipe encrypted secret") }
+}
+
+func TestPermanentTokenCanBeCreatedAndChanged(t *testing.T) {
+    db := tokenTestDB(t)
+    raw, row, err := CreateManagedAPICredential(db, 1, "Long term", "no automatic expiry",
+        []string{"upload:write"}, time.Time{}, true)
+    if err != nil { t.Fatal(err) }
+    if !row.NeverExpires || !row.ExpiresAt.Equal(PermanentTokenExpiry) {
+        t.Fatalf("long term sentinel mismatch: %+v", row)
+    }
+    if raw2, err := RevealAPICredential(db, 1, row.ID); err != nil || raw2 != raw {
+        t.Fatal("cannot recopy long term credential", err)
+    }
+    if _, err := ValidateAPICredential(db, models.Settings{StartAPI:true}, raw); err != nil {
+        t.Fatal("long term authentication failed", err)
+    }
+    if err := UpdateManagedAPICredential(db, 1, row.ID, "Finite", "", []string{"image:read"}, time.Now().Add(30*24*time.Hour), false); err != nil {
+        t.Fatal("switch permanent to finite:", err)
+    }
+    var finite models.APICredential
+    if err := db.First(&finite, "id = ?", row.ID).Error; err != nil { t.Fatal(err) }
+    if finite.NeverExpires || finite.ExpiresAt.Equal(PermanentTokenExpiry) { t.Fatal("permanent flag not cleared") }
+    if err := UpdateManagedAPICredential(db, 1, row.ID, "Long", "", []string{"image:read"}, time.Time{}, true); err != nil {
+        t.Fatal("switch finite to permanent:", err)
+    }
+    var long models.APICredential
+    if err := db.First(&long, "id = ?", row.ID).Error; err != nil { t.Fatal(err) }
+    if !long.NeverExpires || !long.ExpiresAt.Equal(PermanentTokenExpiry) { t.Fatal("permanent option not saved") }
+    if err := SetAPICredentialDisabled(db, 1, row.ID, true); err != nil { t.Fatal(err) }
+    if _, err := ValidateAPICredential(db, models.Settings{StartAPI: true}, raw); !errors.Is(err, ErrToken) {
+        t.Fatal("long-term Token was not disabled")
+    }
+    if err := RevokeAPICredential(db, 1, row.ID); err != nil { t.Fatal(err) }
+    if _, err := ValidateAPICredential(db, models.Settings{StartAPI: true}, raw); !errors.Is(err, ErrToken) {
+        t.Fatal("long-term Token was not revoked")
+    }
+    if _, _, err := CreateNamedAPICredential(db, 1, "invalid sentinel", "", []string{"image:read"}, PermanentTokenExpiry); err == nil {
+        t.Fatal("permanent lifetime must be explicitly selected")
+    }
+    if _, _, err := CreateManagedAPICredential(db, 1, "finite", "", []string{"image:read"}, time.Now().Add(730*24*time.Hour), false); err == nil {
+        t.Fatal("finite duration was improperly allowed beyond one year")
+    }
+}
+
+func TestOlderUnrecoverableTokenCanRotateOnceForFutureCopy(t *testing.T) {
+    db := tokenTestDB(t)
+    raw, row, err := CreateNamedAPICredential(db, 1, "old", "", []string{"image:read"}, time.Now().Add(30*24*time.Hour))
+    if err != nil { t.Fatal(err) }
+    if err := db.Model(&models.APICredential{}).Where("id = ?", row.ID).Update("encrypted_token", "").Error; err != nil { t.Fatal(err) }
+    if _, err := RevealAPICredential(db, 1, row.ID); !errors.Is(err, ErrTokenUnrecoverable) {
+        t.Fatalf("old digest-only token revealed without key: %v", err)
+    }
+    if _, err := ValidateAPICredential(db, models.Settings{StartAPI:true}, raw); err != nil {
+        t.Fatalf("old token should continue to authenticate: %v", err)
+    }
+    replacement, updated, err := RotateAPICredential(db, 1, row.ID)
+    if err != nil { t.Fatal(err) }
+    for i:=0; i<3; i++ {
+        copy, err := RevealAPICredential(db, 1, updated.ID)
+        if err!=nil || copy!=replacement { t.Fatalf("rotated token copy %d failed: %v", i, err) }
+    }
+    if _, err := ValidateAPICredential(db, models.Settings{StartAPI:true}, raw); !errors.Is(err, ErrToken) {
+        t.Fatal("explicit rotation did not invalidate old token")
+    }
+    if err := RevokeAPICredential(db, 1, updated.ID); err != nil { t.Fatal(err) }
 }
