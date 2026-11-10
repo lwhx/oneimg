@@ -3,6 +3,7 @@
 > 项目：[`lwhx/oneimg`](https://github.com/lwhx/oneimg)（初春图床）  
 > 依据：2026-11-10 仓库 `main` 分支，审查时基线提交 `0f5a2d4ee07ba2615739ffc9974aaccddb44ee72`。文中响应示例为**结构示意**，并非真实服务器实测返回。  
 > 目的：为后续开发 **ScriptCat 图片上传脚本**提供接口契约、鉴权方法、错误处理和实现建议。  
+> **版本注意：**本文件中“多 Token / 自定义权限”内容对应开发分支 `feat/multi-api-token-scopes-expiry-20261110`；未合并并部署前仍以原有单 Token 行为为准。  
 > 另有尚未合并的上传限制调整草稿 [PR #21](https://github.com/lwhx/oneimg/pull/21)。**本文件将当前 `main` 与待合并改动分开说明，不默认 PR 已部署。**
 
 ## 1. 接口概览
@@ -13,56 +14,46 @@
 - 最适合 ScriptCat 的授权方式：`Authorization: Bearer <API_TOKEN>`。
 - 该服务不等于 Telegram Bot API。ScriptCat 只访问 OneImg，具体保存到本地、R2、S3 或 TG 由 OneImg 负责。
 
-### 1.1 Token 可调用的接口清单（源码白名单）
+### 1.1 Token 可调用的接口清单（多 Token 分支）
 
 | Method | 路径 | scope | 用途 |
 | --- | --- | --- | --- |
-| GET | `/api/user/status` | `image:read` | 检查 Token 有效性及绑定用户 |
-| GET | `/api/uploadConfig` | `image:read` | 读取可用存储桶、默认桶、上传限制、已有标签 |
-| GET | `/api/buckets/list` | `image:read` | 查看存储桶清单及启停状态（不等于可上传权限） |
-| GET | `/api/tags` | `image:read` | 获取已有标签的 `id` 与 `name` |
-| GET | `/api/images` | `image:read` | 分页查自己的图片 |
-| GET | `/api/images/:id` | `image:read` | 查看自己有权限访问的图片详情/副本状态 |
-| POST | `/api/upload` | `upload:write` | 与下一接口相同的上传处理器，仍使用 `images[]` 字段 |
-| POST | **`/api/upload/images`** | `upload:write` | **推荐：文件或批量图片上传** |
-| POST | **`/api/images/url`** | `upload:write` | **推荐：服务端抓取公开图片 URL** |
+| GET | `/api/user/status` | 任一有效 Token | 检查当前 Token 所属账户 |
+| GET | `/api/uploadConfig` | `image:read` **或** `upload:write` | 上传配置、目标桶与格式限制 |
+| GET | `/api/buckets/list`、`/api/tags` | `image:read` **或** `upload:write` | 存储桶、标签清单 |
+| GET | `/api/images`、`/api/images/:id` | `image:read` | 自己的图片列表与详情 |
+| POST | `/api/upload`、**`/api/upload/images`** | `upload:write` | 上传单张或批量图片，使用 `images[]` |
+| POST | **`/api/images/url`** | `upload:write` | 服务端导入公开图片 URL |
+| DELETE | `/api/images/:id` | `image:delete` | 只可删除自己账户的图片 |
+| GET | `/api/folders` | `folder:read` 或 `folder:write` | 查看自己的文件夹 |
+| POST/PUT/DELETE | `/api/folders`、`/api/folders/:id` | `folder:write` | 创建、修改、删除自己的文件夹（按对应 HTTP 方法） |
+| PUT | `/api/images/folder` | `folder:write` | 移动自己的图片到指定文件夹 |
 
-**注意：**代码中 Token 的路由 scope 判断还列出了 `POST /api/images/upload`，但实际路由**没有注册**这个路径，不要使用它。
-
-以下操作**不能仅凭 API Token 调用**：`GET/POST /api/folders`、`DELETE /api/images/:id`、`POST /api/tags`、`POST /api/settings/regenerate`、`/api/uploads/direct/*`（R2 直传任务接口）及其他设置/管理接口。它们需要受支持的浏览器登录会话和相应权限，或将来明确改造服务端的 Token scope/路由规则。不要尝试用管理员 Token 绕过该限制。
+**注意：**`POST /api/images/upload` 未注册，不能调用。管理 Token 的 `/api/tokens/*`、系统设置、存储管理、R2 直传任务等仍然需要网页登录会话或不支持 Token。**权限是显式授予且按方法/路径严格匹配**，不能将此表理解为管理员凭据自动全权。完整说明：[API Token 管理规范](api-token-management.md)。
 
 ## 2. API Token 与鉴权
 
 ### 2.1 获取 Token 的正确流程
 
-1. 在 OneImg 后台登录有相关权限的账户。
-2. 在系统设置中开启 API 功能（配置项 `start_api`）。API 未开启时，已有 Token 也无法通过鉴权。
-3. 在系统设置的 API Token 区域点击**生成 Token**，或者在已登录且有 `setting:api` 权限的浏览器会话中调用 `POST /api/settings/regenerate`。
-4. **立即保存** `data.api_token`；明文只返回一次，之后不能通过查询设置找回。
-5. 将这个 Token 保存在 ScriptCat 的脚本设置中（例如 `GM_setValue`），不要硬编码进公开发布的脚本，不要写入网页 DOM、日志或 URL。
+1. 登录 OneImg 后台，确保当前账号拥有 `setting:api` 权限，并启用 API（`start_api`）。
+2. 进入“系统设置 → API → API Token 管理”，填写名称（例如 `ScriptCat 图片上传`）、备注和到期时间。
+3. 权限推荐勾选 `image:read` + `upload:write`，**不要为了方便给脚本开放删除或文件夹管理权限**。
+4. 点击“创建 Token”，**点击“复制 Token”按钮**将完整密钥复制到剪贴板；在当前页面的列表中也可复制。刷新后系统只存不可逆摘要，无法恢复原密钥；如果丢失，可对目标 Token 使用“重置并复制”，但旧 Token 会立即失效，脚本需要更新配置。
+5. 将 Token 保存到 ScriptCat 的私有脚本设置（例如 `GM_setValue`），不要硬编码在公开脚本中或写入页面日志。
 
-Token 生成接口示例（**必须是具备设置权限的浏览器登录会话**；不能用已有 API Token 调它）：
+也可以使用具备后台登录 Cookie 与 `setting:api` 权限的会话发出：
 
 ```http
-POST /api/settings/regenerate HTTP/1.1
-Cookie: <浏览器实际登录会话 Cookie>
+POST /api/tokens
+Content-Type: application/json
+Cookie: <已登录且有权限的 OneImg 浏览器会话 Cookie>
+
+{"name":"ScriptCat","description":"图片上传","scopes":["image:read","upload:write"],"expires_at":"<RFC3339 到期时间>"}
 ```
 
-响应结构示意：
+成功时 HTTP 201、JSON `code:200`，`data.token`（兼容别名 `data.api_token`）只返回一次。**有效期可选 5 分钟至 365 天；同账户可同时保留最多 30 个未过期未撤销 Token。**旧接口 `POST /api/settings/regenerate` 仍可用于创建默认 30 天的 Token，更新后不再撤销其他 Token。
 
-```json
-{
-  "code": 200,
-  "message": "API 凭据仅显示一次，请妥善保存",
-  "data": {
-    "api_token": "oi_<仅示例，真实令牌不要分享>",
-    "expires_at": "<ISO8601 到期时间>",
-    "scopes": "image:read,upload:write"
-  }
-}
-```
-
-**生命周期与危险操作：**当前新签发 Token 的有效期为 **30 天**，过期需重新生成；代码的重新生成操作会撤销数据库中**所有仍处于有效状态的 API 凭据**，而不仅是当前浏览器的一份 Token，因此可能影响其他集成。建议后续脚本提供“检测过期 / 提示重新配置”，不要调用任何设置接口自动轮换。旧版本 Token 可能沿用 `oneimg_token=` 请求头兼容语法，但建议统一采用 Bearer。
+管理 Token 的列表、编辑权限/到期时间、暂停/恢复、重置并复制（`POST /api/tokens/:id/rotate`）及撤销，详见 [多 Token 管理接口文档](api-token-management.md)。Token 无法通过 Bearer 自行调用这些管理接口。
 
 ### 2.2 所有 Token 请求的请求头
 
@@ -305,11 +296,11 @@ Authorization: Bearer <TOKEN>
 
 成功时 `data` 包含图片对象及 `storage_statuses`；`id` 取自上传结果。存储同步的实际状态应通过详情确认。
 
-### 4.6 文件夹管理与删除（API Token 当前不支持）
+### 4.6 文件夹管理与图片删除（按 Token 独立授权）
 
-后台网页登录会话存在 `GET /api/folders`、`POST /api/folders`、`PUT /api/folders/:id` 和 `DELETE /api/images/:id` 等管理接口，但**API Token 白名单中没有这些路由**。如果 ScriptCat 以后需要“输入名称自动创建文件夹”或“一键删图”，需要单独设计受限 Token scope、账户所有权校验和相关后端改造；当前版本不要假定可以直接通过 Token 使用这些接口。
+如果在该 Token 中额外授予 `folder:read`，可调用 `GET /api/folders` 读取自己账户的文件夹；授予 `folder:write` 后，可使用 `POST /api/folders`、`PUT /api/folders/:id`、`DELETE /api/folders/:id` 和 `PUT /api/images/folder`。如果另外授权 `image:delete`，可使用 `DELETE /api/images/:id` 删除自己账户的图片。
 
-当前阶段最稳妥的方式是在 OneImg 网页后台**先建好文件夹**，把 `folder_id` 配到 ScriptCat 脚本中。
+**这些是高风险权限，ScriptCat 上传助手一般不需要。**默认将 `folder_id=0` 用于未分类，或在后台先创建好文件夹供脚本引用。
 
 ## 5. 图片格式、大小与存储行为
 
@@ -468,7 +459,7 @@ HTML：<img src="https://img.example.com/uploads/2026/11/abc.webp" alt="图片">
 
 | 现象 | 可能原因 | 建议 |
 | --- | --- | --- |
-| 401 | Token 错误、失效、超过 30 天、API 关闭 | 提示重新配置，不自动暴露密码 |
+| 401 | Token 错误、已暂停、已撤销、超过单独配置的到期时间、API 关闭 | 提示重新配置，不自动暴露密码 |
 | 403 | Token scope 不足、文件夹/桶权限不足，或者请求来源头被拒绝 | 区分 `message`，检查 `Origin` / `Sec-Fetch-Site` 和桶权限 |
 | 404 | 路由不存在或图片不存在 | 确认路径；不要使用未注册的 `/api/images/upload` |
 | 413 | 请求体过大 | 读取服务器上传配置，减少单文件或分批 |
@@ -488,17 +479,17 @@ HTML：<img src="https://img.example.com/uploads/2026/11/abc.webp" alt="图片">
 2. 在指定网页的图片元素增加悬浮上传按钮，或通过右键/工具栏选择多张图片；需要注意用户授权和网站的图片访问权限。
 3. 默认优先把**公开 HTTP(S) 图片 URL**交给 `/api/images/url`；导入失败时提供明确提示，并在有权限的情况下使用下载 Blob → `/api/upload/images` 的回退路径。
 4. 支持拖拽、粘贴、本地文件选择，动态读取并校验最大张数、文件大小及允许格式。
-5. 支持从 `uploadConfig` 读取合法存储桶和已有标签；文件夹 ID 初期手动填写，后续如需自动创建文件夹再扩展后端 Token 权限。
+5. 支持从 `uploadConfig` 读取合法存储桶和已有标签；文件夹 ID 可手动填写；若确需自动管理自己的文件夹，可额外授予 `folder:write`（上传脚本不推荐）。
 6. 展示每张成功/失败结果；支持复制直链、Markdown、HTML，优先使用上传回执中的 `url`。
 7. Token 用 ScriptCat 私有脚本存储，不共享到网页上下文；提供手动清除配置和过期提示。
-8. 如果未来需要自动调用 R2 直传任务、删除图片、创建文件夹，应先更新 OneImg **Token scope 与路由授权**，不能直接复用当前 Token 调用会话专用接口。
+8. R2 直传任务仍是会话专用 API；删除图片与文件夹管理须分别授予 `image:delete` / `folder:write`，不可默认启用。
 
 ## 9. 源码核对位置
 
 - [路由定义 `backend/routes/routes.go`](https://github.com/lwhx/oneimg/blob/main/backend/routes/routes.go)
 - [Token 鉴权、scope 白名单 `backend/middlewares/AuthMiddleware.go`](https://github.com/lwhx/oneimg/blob/main/backend/middlewares/AuthMiddleware.go)
 - [API Token 生成 `backend/controllers/auth/AuthActions.go`](https://github.com/lwhx/oneimg/blob/main/backend/controllers/auth/AuthActions.go)
-- [Token 30 天与重新生成行为 `backend/utils/authsecurity/tokens.go`](https://github.com/lwhx/oneimg/blob/main/backend/utils/authsecurity/tokens.go)
+- [多 Token 与到期管理 `backend/utils/authsecurity/tokens.go`](https://github.com/lwhx/oneimg/blob/main/backend/utils/authsecurity/tokens.go)
 - [上传入口与配置 `backend/controllers/images/ImageUpload.go`](https://github.com/lwhx/oneimg/blob/main/backend/controllers/images/ImageUpload.go)
 - [上传结果 JSON `backend/controllers/images/UploadResult.go`](https://github.com/lwhx/oneimg/blob/main/backend/controllers/images/UploadResult.go)
 - [上传结果字段 `backend/interfaces/image.go`](https://github.com/lwhx/oneimg/blob/main/backend/interfaces/image.go)

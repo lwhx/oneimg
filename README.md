@@ -147,6 +147,30 @@ OneImg 是一个功能完整的自托管图床与图片管理系统。它的核�
 
 > 几分钟即可跑起来，适合先本地体验，再逐步接入对象存储或远程存储。
 
+### GitHub Container Registry（GHCR，轻量镜像）
+
+当前仓库的 `main` 分支会通过 GitHub Actions 自动构建并发布多架构镜像（`linux/amd64`、`linux/arm64`）：
+
+```text
+ghcr.io/lwhx/oneimg:latest
+```
+
+`latest` 始终对应已构建的 `main` 版本，同时提供不可变构建对应的 `sha-XXXXXXX` 标签；推送 `v*` 标签还会发布同名版本镜像。镜像采用 Node/Go **多阶段编译 + Alpine 运行层**，只包含裁剪过的 Go 程序、证书、时区和 WebP 运行库；前端已经编译嵌入 Go 二进制，不在运行层重复打包。为确保 SQLite、WebP 和 TLS 功能，仍保留必要的动态库，不采用不兼容的 `scratch` 基础镜像。
+
+```bash
+docker pull ghcr.io/lwhx/oneimg:latest
+
+docker run -d --name oneimg \
+  -p 8080:8080 \
+  -e APP_URL=https://img.example.com \
+  -v /srv/oneimg/data:/app/data \
+  -v /srv/oneimg/uploads:/app/uploads \
+  --restart unless-stopped \
+  ghcr.io/lwhx/oneimg:latest
+```
+
+将 `APP_URL` 改为实际域名，并保留原有 `data`、`uploads` 挂载。使用 Compose 时，将 `build: .` 改为 `image: ghcr.io/lwhx/oneimg:latest` 后运行 `docker compose pull && docker compose up -d`。首次推送的 GHCR 包如默认不可公开拉取，需要在 GitHub Packages 中调整包的可见性。实际镜像大小以 GHCR 发布结果 / `docker image inspect` 为准。
+
 ### Docker Compose
 
 ```bash

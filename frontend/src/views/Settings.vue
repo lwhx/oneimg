@@ -79,6 +79,7 @@
                     <SettingsSwitchPanel />
                 </div>
             </div>
+            <APITokenManager v-if="activeSettingsTab === 'api'" :api-enabled="!!systemSettings.start_api" />
         </div>
     </div>
 </template>
@@ -89,11 +90,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { settingsContext, settingsAccess, visibleSettingsTabs } from '@/utils/settingsAccess.js'
 import { createRandomGraphSettings } from '@/utils/randomGraphSettings.js'
 import { readApiResponse } from '@/utils/apiFeedback.js'
-import { copyToClipboard } from '@/utils/clipboard.js'
 import Message from '@/utils/message.js'
-import { createDialogScope } from '@/utils/dialogScope.js'
-const { Dialog: PopupModal, dispose: disposeDialogs } = createDialogScope()
 import SettingsFieldsPanel from '@/components/settings/SettingsFieldsPanel.vue'
+import APITokenManager from '@/components/settings/APITokenManager.vue'
 import SettingsSeoPanel from '@/components/settings/SettingsSeoPanel.vue'
 import SettingsIdentityPanel from '@/components/settings/SettingsIdentityPanel.vue'
 import SettingsSecurityPanel from '@/components/settings/SettingsSecurityPanel.vue'
@@ -113,12 +112,6 @@ const settingsNotice = ref('正在加载设置…')
 // Permission authority is the Cookie-authenticated backend, never a stale localStorage snapshot.
 const settingsState = ref('loading')
 const canReadSettings = computed(() => !['denied', 'unauthenticated'].includes(settingsState.value))
-const generatedApiToken = ref('')
-const tokenGenerating = ref(false)
-// 复制成功只给 2 秒反馈，避免按钮一直停在「已复制」
-const tokenCopied = ref(false)
-let tokenCopiedTimer
-
 const settingsTabs = computed(() => visibleSettingsTabs(mySettingPerms.value));
 
 // security 外层走单列（它自带「验证 | 登录」二分），seo/system 内容本身就是一整列。
@@ -283,57 +276,12 @@ const handleSettingsTabKeydown = (event, index) => {
     })
 }
 
-// 生成 API Token。
-// 首次生成没有「旧凭据会被撤销」这回事，文案和按钮都按是否已配置区分，
-// 否则第一次点「生成 Token」会弹一个说「此前凭据将被撤销」的确认框，容易误解。
-const generateApiToken = () => {
-    const isRegenerate = !!systemSettings.value.api_token_configured
-    const modal = new PopupModal({
-        title: isRegenerate ? '重新生成 API 凭据' : '生成 API 凭据',
-        content: isRegenerate
-            ? '<p>此前 API 凭据将被撤销，新凭据仅显示一次。确定继续吗？</p>'
-            : '<p>新凭据仅显示一次，请生成后立即保存。确定继续吗？</p>',
-        buttons: [
-            { text: '取消', callback: modal => modal.close() },
-            { text: isRegenerate ? '重新生成' : '生成', type: 'primary', callback: async modal => {
-                if (tokenGenerating.value) return
-                tokenGenerating.value = true
-                try {
-                    const response = await fetch('/api/settings/regenerate', { method: 'POST' })
-                    const result = await response.json()
-                    if (!response.ok || result.code !== 200 || !result.data?.api_token) throw new Error(result.message || '生成失败')
-                    generatedApiToken.value = result.data.api_token
-                    tokenCopied.value = false
-                    systemSettings.value.api_credentials = [{ scopes: result.data.scopes, expires_at: result.data.expires_at, last_used_at: null }]
-                    systemSettings.value.api_token_configured = true
-                    Message.success(result.message || '新凭据仅显示一次，请立即保存')
-                    modal.close()
-                } catch (error) { Message.error(error.message || '生成失败') }
-                finally { tokenGenerating.value = false }
-            } },
-        ],
-    })
-    modal.open()
-}
-
-// 复制刚生成的凭据。本来只能靠手动选中输入框里的文本，
-// 而凭据是 64 字符的十六进制串，肉眼选中极易漏字符。
-const copyApiToken = async () => {
-    if (!generatedApiToken.value) return
-    const ok = await copyToClipboard(generatedApiToken.value)
-    if (!ok) { Message.error('复制失败，请手动选中后复制'); return }
-    tokenCopied.value = true
-    clearTimeout(tokenCopiedTimer)
-    tokenCopiedTimer = setTimeout(() => { tokenCopied.value = false }, 2000)
-    Message.success('已复制到剪贴板')
-}
-
 const generateRandomGraph = createRandomGraphSettings();
 
-onBeforeUnmount(() => { clearTimeout(tokenCopiedTimer); disposeDialogs(); generateRandomGraph.dispose() })
+onBeforeUnmount(() => { generateRandomGraph.dispose() })
 
 // 6. 初始化
-provide(settingsContext, { systemSettings, activeSettingsTab, activeSettingsTabLabel, presetBuckets, supportsPublicImageDomain, hasPublicImageDomain, publicImageDomainUnavailable, publicImageDomainInputDisabled, publicImageDomainHint, handleFieldBlur, handleSelectChange, handleSwitchChange, generatedApiToken, tokenGenerating, tokenCopied, copyApiToken, generateApiToken, generateRandomGraph })
+provide(settingsContext, { systemSettings, activeSettingsTab, activeSettingsTabLabel, presetBuckets, supportsPublicImageDomain, hasPublicImageDomain, publicImageDomainUnavailable, publicImageDomainInputDisabled, publicImageDomainHint, handleFieldBlur, handleSelectChange, handleSwitchChange, generateRandomGraph })
 onMounted(async () => {
     await fetchSystemSettings()
     // 页签渲染出来之后再把 URL 指定的那一项滚进视野（窄屏横向滚动区）

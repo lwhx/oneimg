@@ -38,8 +38,7 @@ func authenticateDB(optional bool, getDB func() *gorm.DB, getSettings func()(mod
    setting,err:=getSettings(); if err!=nil { rejectAuth(c,503,"认证配置暂不可用"); return }
    token,err:=authsecurity.ValidateAPICredential(db,setting,raw)
    if err!=nil { rejectAuth(c,401,"API 凭据无效、已过期或 API 未开启"); return }
-   scope:=tokenRouteScope(c.Request.Method,c.Request.URL.Path)
-   if scope=="" || !authsecurity.HasScope(token,scope) { rejectAuth(c,403,"API 凭据无此操作权限"); return }
+   if !tokenRouteAllowed(c.Request.Method,c.Request.URL.Path,token) { rejectAuth(c,403,"API 凭据无此操作权限"); return }
    var user models.User
    if db.First(&user,token.OwnerID).Error!=nil { rejectAuth(c,401,"API 凭据所属用户不存在"); return }
    // Controllers still enforce image ownership/bucket permissions. Tokens never
@@ -82,13 +81,49 @@ func parseAPIToken(header string) (string,bool) {
  } else if strings.HasPrefix(header,"Bearer ") { raw=strings.TrimPrefix(header,"Bearer ") } else { return "",false }
  if raw=="" || len(raw)>256 || strings.ContainsAny(raw," ,\t\r\n") { return "",false }; return raw,true
 }
-func tokenRouteScope(method,path string) string {
- if method==http.MethodGet {
-  switch path { case "/api/user/status","/api/uploadConfig","/api/buckets/list","/api/tags","/api/images":return "image:read" }
-  if strings.HasPrefix(path,"/api/images/") && !strings.Contains(strings.TrimPrefix(path,"/api/images/"),"/") { return "image:read" }
- }
- if method==http.MethodPost { switch path { case "/api/upload","/api/upload/images","/api/images/upload","/api/images/url":return "upload:write" } }
- return ""
+// tokenRouteAllowed is a strict, method-specific API allowlist. A token has
+// no setting:*, storage administration, user management or token minting path.
+func tokenRouteAllowed(method, path string, token models.APICredential) bool {
+    has := func(scope string) bool { return authsecurity.HasScope(token, scope) }
+    switch method {
+    case http.MethodGet:
+        switch path {
+        case "/api/user/status":
+            return true
+        case "/api/uploadConfig", "/api/buckets/list", "/api/tags":
+            return has("image:read") || has("upload:write")
+        case "/api/images":
+            return has("image:read")
+        case "/api/folders":
+            return has("folder:read") || has("folder:write")
+        }
+        return isSingleNumericPath(path, "/api/images/") && has("image:read")
+    case http.MethodPost:
+        switch path {
+        case "/api/upload", "/api/upload/images", "/api/images/url":
+            return has("upload:write")
+        case "/api/folders":
+            return has("folder:write")
+        }
+    case http.MethodPut:
+        return has("folder:write") && (path == "/api/images/folder" || isSingleNumericPath(path, "/api/folders/"))
+    case http.MethodDelete:
+        if isSingleNumericPath(path, "/api/images/") {
+            return has("image:delete")
+        }
+        return isSingleNumericPath(path, "/api/folders/") && has("folder:write")
+    }
+    return false
+}
+
+func isSingleNumericPath(path, prefix string) bool {
+    if !strings.HasPrefix(path, prefix) { return false }
+    id := strings.TrimPrefix(path, prefix)
+    if id == "" { return false }
+    for _, c := range id {
+        if c < '0' || c > '9' { return false }
+    }
+    return true
 }
 func RequirePermission(required string) gin.HandlerFunc {
  return func(c *gin.Context) {

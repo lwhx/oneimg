@@ -1,4 +1,7 @@
 # syntax=docker/dockerfile:1
+# Frontend assets and fonts are embedded into the stripped Go binary.
+# Keep build toolchains in separate stages: the runtime only needs the CGO
+# SQLite/WebP dependencies, CA certificates, and timezone data.
 FROM node:22-alpine3.23 AS frontend-builder
 ENV NODE_OPTIONS=--max-old-space-size=768
 WORKDIR /src/frontend
@@ -24,11 +27,13 @@ ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build go build -p 1 -trimpath -ldflags="-s -w -X oneimg/backend/config.Version=${VERSION}" -o /out/oneimg ./main.go
 
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates tzdata libwebp
+# CGO_ENABLED=1 is required by SQLite and WebP; do not switch to scratch
+# or drop libwebp without verifying database and image-processing features.
+RUN apk add --no-cache ca-certificates tzdata libwebp \
+    && mkdir -p /app/data /app/uploads
 WORKDIR /app
 COPY --from=backend-builder /out/oneimg /app/oneimg
-COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
 COPY ca/ ./ca/
-RUN mkdir -p /app/data /app/uploads
+# No frontend/dist copy: main.go embeds it into /app/oneimg at build time.
 EXPOSE 8080
 CMD ["/app/oneimg"]
